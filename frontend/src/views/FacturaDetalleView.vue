@@ -148,9 +148,22 @@ function confianza(campo: string): number | null {
   return factura.value?.confidences?.[campo] ?? null;
 }
 
+/**
+ * Un campo IA sin entrada de confianza ya no significa "lo puso una persona":
+ * Gemini ahora omite a propósito los campos que reconoce con seguridad (ver
+ * schema-gemini.ts) para no gastar tokens de salida listando 16 números por
+ * factura. Solo es "Manual" de verdad cuando la factura nunca pasó por IA, o
+ * cuando el campo está vacío (no hubo nada que calificar).
+ */
+function confiableSinEntrada(campo: string): boolean {
+  if (factura.value?.confidences == null) return false;
+  const valor = (form as Record<string, unknown>)[campo];
+  return valor !== null && valor !== undefined && valor !== '';
+}
+
 function tonoConfianza(campo: string): 'ok' | 'alerta' | 'error' | 'indigo' {
   const c = confianza(campo);
-  if (c === null) return 'indigo';
+  if (c === null) return confiableSinEntrada(campo) ? 'ok' : 'indigo';
   if (c >= 0.9) return 'ok';
   if (c >= 0.8) return 'alerta';
   return 'error';
@@ -158,8 +171,7 @@ function tonoConfianza(campo: string): 'ok' | 'alerta' | 'error' | 'indigo' {
 
 function textoConfianza(campo: string): string {
   const c = confianza(campo);
-  // Sin confianza registrada, el valor lo puso una persona.
-  if (c === null) return 'Manual';
+  if (c === null) return confiableSinEntrada(campo) ? 'Alta' : 'Manual';
   return `${Math.round(c * 100)}%`;
 }
 
