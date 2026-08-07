@@ -23,6 +23,13 @@ interface RespuestaLoteGemini {
   resultados: Array<HechosConTexto & { indiceImagen: number }>;
 }
 
+/**
+ * Distingue "el modelo cortó por presupuesto" de cualquier otro fallo. Solo
+ * este caso amerita partir el lote en dos y reintentar — un fallo de red o de
+ * parseo no se arregla con menos facturas por request.
+ */
+class RespuestaTruncadaError extends Error {}
+
 const MAX_REINTENTOS_RATE_LIMIT = 5;
 /**
  * Presupuesto de salida por documento. Medido sobre un lote real de 10
@@ -96,12 +103,29 @@ export class GeminiExtractorService implements IInvoiceExtractor {
     });
     this.logger.log(`Enviando lote de ${documentos.length} facturas a Gemini (${this.modelo})...`);
     const maxOutputTokens = this.presupuestoSalida(documentos.length);
-    const response = await this.generarConReintento(
-      contenido,
-      PROMPT_LOTE_FACTURAS_RD,
-      ESQUEMA_LOTE_GEMINI,
-      maxOutputTokens,
-    );
+    let response;
+    try {
+      response = await this.generarConReintento(contenido, PROMPT_LOTE_FACTURAS_RD, ESQUEMA_LOTE_GEMINI, maxOutputTokens);
+    } catch (e) {
+      // El modelo cortó por presupuesto: partir el lote en dos y reintentar
+      // cada mitad, en vez de dejar que esto burbujee hasta `procesarLote`,
+      // que ante CUALQUIER fallo del lote cae a procesar cada documento por
+      // separado — con GEMINI_TAMANO_LOTE=20 serían 20 requests individuales
+      // en vez de 2 (una partición sola cubre el caso normal: el techo de
+      // salida da para ~21 documentos, así que un lote de 20 que trunca es la
+      // excepción, no la norma).
+      if (e instanceof RespuestaTruncadaError && documentos.length > 1) {
+        const mitad = Math.ceil(documentos.length / 2);
+        this.logger.warn(`${e.message} Partiendo el lote de ${documentos.length} en 2 (${mitad} + ${documentos.length - mitad}) y reintentando.`);
+        // En serie, no en paralelo: medido en este mismo proyecto que dos
+        // peticiones concurrentes a la capa gratuita no suman caudal, cada
+        // una tarda más y el total empeora (ver `ciclo()` en procesador.service.ts).
+        const primera = await this.extraerLote(documentos.slice(0, mitad));
+        const segunda = await this.extraerLote(documentos.slice(mitad));
+        return [...primera, ...segunda];
+      }
+      throw e;
+    }
     const parseado = this.parsearJson<RespuestaLoteGemini>(response.text);
 
     const porPosicion = new Map<number, HechosConTexto[]>();
@@ -219,9 +243,9 @@ export class GeminiExtractorService implements IInvoiceExtractor {
         // fallo aparecía como "no es JSON válido", que apunta al sitio
         // equivocado.
         if (respuesta.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
-          throw new Error(
+          throw new RespuestaTruncadaError(
             `Gemini truncó la respuesta al agotar los ${maxOutputTokens} tokens de salida ` +
-              `(usó ${respuesta.usageMetadata?.candidatesTokenCount ?? '?'}). Reduce GEMINI_TAMANO_LOTE.`,
+              `(usó ${respuesta.usageMetadata?.candidatesTokenCount ?? '?'}).`,
           );
         }
 

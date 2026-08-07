@@ -113,3 +113,48 @@ describe('GeminiExtractorService.extraerLote — alineamiento por índice', () =
     expect(generateContent).not.toHaveBeenCalled();
   });
 });
+
+describe('GeminiExtractorService.extraerLote — partición al truncar', () => {
+  let generateContent: jest.Mock;
+
+  beforeEach(() => {
+    generateContent = jest.fn();
+    (GoogleGenAI as unknown as jest.Mock).mockImplementation(() => ({ models: { generateContent } }));
+  });
+
+  it('si el lote entero trunca, lo parte en dos mitades y las reintenta en serie', async () => {
+    generateContent
+      .mockResolvedValueOnce({ candidates: [{ finishReason: 'MAX_TOKENS' }] }) // lote de 4 completo
+      .mockResolvedValueOnce({ text: JSON.stringify({ resultados: [itemLote(1, '10'), itemLote(2, '20')] }) }) // primera mitad
+      .mockResolvedValueOnce({ text: JSON.stringify({ resultados: [itemLote(1, '30'), itemLote(2, '40')] }) }); // segunda mitad
+
+    const servicio = new GeminiExtractorService(fakeConfig());
+    const resultados = await servicio.extraerLote(documentos(4));
+
+    expect(resultados.map((r) => r?.hechos.montoTotal)).toEqual(['10', '20', '30', '40']);
+    expect(generateContent).toHaveBeenCalledTimes(3);
+  });
+
+  it('reintenta la partición si una mitad también trunca', async () => {
+    generateContent
+      .mockResolvedValueOnce({ candidates: [{ finishReason: 'MAX_TOKENS' }] }) // lote de 4
+      .mockResolvedValueOnce({ candidates: [{ finishReason: 'MAX_TOKENS' }] }) // primera mitad (2) también trunca
+      .mockResolvedValueOnce({ text: JSON.stringify({ hechos: hechosVacios({ montoTotal: '1' }), confidences: [], textoCompleto: '' }) }) // doc 1 solo
+      .mockResolvedValueOnce({ text: JSON.stringify({ hechos: hechosVacios({ montoTotal: '2' }), confidences: [], textoCompleto: '' }) }) // doc 2 solo
+      .mockResolvedValueOnce({ text: JSON.stringify({ resultados: [itemLote(1, '30'), itemLote(2, '40')] }) }); // segunda mitad
+
+    const servicio = new GeminiExtractorService(fakeConfig());
+    const resultados = await servicio.extraerLote(documentos(4));
+
+    expect(resultados.map((r) => r?.hechos.montoTotal)).toEqual(['1', '2', '30', '40']);
+  });
+
+  it('un fallo que no es truncamiento no se parte: se propaga tal cual', async () => {
+    generateContent.mockRejectedValue(new Error('network down'));
+    const servicio = new GeminiExtractorService(fakeConfig());
+    await expect(servicio.extraerLote(documentos(4))).rejects.toThrow('network down');
+    // Sin la partición de por medio: una sola llamada real (el limitador de
+    // rate-limit no se activa para un error que no es 429).
+    expect(generateContent).toHaveBeenCalledTimes(1);
+  });
+});
