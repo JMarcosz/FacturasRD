@@ -1,0 +1,325 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Catálogos como enums de Postgres ──────────────────────────────────────
+
+enum Rol {
+  ADMIN
+  CONTADOR
+}
+
+enum FormatoDgii {
+  F606
+  F607
+}
+
+enum EstadoPeriodo {
+  ABIERTO
+  REVISADO
+  EXPORTADO
+}
+
+enum EstadoDocumento {
+  PENDIENTE
+  PROCESANDO
+  EXTRAIDO
+  ERROR
+}
+
+enum OrigenFactura {
+  IA
+  MANUAL
+  EDITADA
+}
+
+enum Severidad {
+  ERROR
+  WARNING
+}
+
+enum OrigenCliente {
+  MANUAL
+  AUTO
+}
+
+// ── Modelos ────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  nombre       String
+  rol          Rol      @default(CONTADOR)
+  activo       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  auditLogs AuditLog[]
+
+  @@map("users")
+}
+
+model Cliente {
+  id                     String   @id @default(uuid())
+  rnc                    String   @unique
+  nombre                 String
+  tipoIngresoDefault     String? // catálogo Tipo de Ingreso (607), ej. "01"
+  tasaItbis              Decimal  @default(0.18) @db.Decimal(5, 4)
+  aplicaProporcionalidad Boolean  @default(false)
+  activo                 Boolean       @default(true)
+  origen                 OrigenCliente @default(MANUAL)
+  confirmado             Boolean       @default(true)
+  rncVerificado          Boolean       @default(true)
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+
+  periodos       Periodo[]
+  facturas       Factura[]
+  reglasComercio ReglaComercio[]
+  aliasRnc       ClienteRncAlias[]
+
+  @@map("clientes")
+}
+
+/**
+ * Otros RNC bajo los que se reconoce al mismo contribuyente. Nacen al fusionar
+ * dos clientes que resultaron ser uno: el RNC del absorbido queda como alias
+ * del sobreviviente.
+ *
+ * Sin esto la fusión solo arreglaba el pasado — el RNC mal leído desaparecía
+ * con el cliente desactivado y la siguiente factura que el OCR volviera a leer
+ * igual quedaba sin clasificar, sin forma de engancharla nunca.
+ */
+model ClienteRncAlias {
+  id        String   @id @default(uuid())
+  clienteId String
+  cliente   Cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  // Normalizado (solo dígitos), único global: un RNC identifica a lo sumo a un
+  // contribuyente, ya sea por su columna `rnc` o por un alias.
+  rnc       String   @unique
+  motivo    String? // p. ej. "fusión de duplicados"
+  createdAt DateTime @default(now())
+
+  @@index([clienteId])
+  @@map("cliente_rnc_alias")
+}
+
+model Periodo {
+  id        String          @id @default(uuid())
+  clienteId String
+  cliente   Cliente         @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  yyyymm    String // "202601"
+  formato   FormatoDgii
+  estado    EstadoPeriodo   @default(ABIERTO)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  documentos    Documento[]
+  facturas      Factura[]
+  exportaciones Exportacion[]
+
+  @@unique([clienteId, yyyymm, formato])
+  @@map("periodos")
+}
+
+model Documento {
+  id           String          @id @default(uuid())
+  // Nullable: un documento entra al sistema sin período — el período se
+  // asigna (auto o a mano) recién cuando su factura queda clasificada.
+  periodoId    String?
+  periodo      Periodo?        @relation(fields: [periodoId], references: [id], onDelete: Cascade)
+  filename     String
+  sha256       String
+  mimeType     String
+  paginas      Int?
+  rutaArchivo  String
+  estado       EstadoDocumento @default(PENDIENTE)
+  intentos     Int             @default(0)
+  cuOperationId String?
+  rawJson      Json?
+  error        String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  facturas Factura[]
+
+  // Dedupe global por contenido — ya no tiene sentido acotarlo a un período
+  // porque el documento no necesariamente pertenece a uno al subirlo.
+  @@unique([sha256])
+  @@map("documentos")
+}
+
+model Factura {
+  id          String        @id @default(uuid())
+  documentoId String
+  documento   Documento     @relation(fields: [documentoId], references: [id], onDelete: Cascade)
+
+  // Nullable: se completa recién cuando la factura queda clasificada (ver
+  // clienteId/formato abajo). Antes de eso, la factura existe igual — es lo
+  // que alimenta la lista principal — solo que sin período ni reglas DGII
+  // aplicadas todavía.
+  periodoId   String?
+  periodo     Periodo?      @relation(fields: [periodoId], references: [id], onDelete: Cascade)
+
+  // Clasificación: a qué cliente (contribuyente que declara) pertenece esta
+  // factura y en qué formato (607 = es una venta suya, 606 = es una compra
+  // suya). Se completa automáticamente si el RNC del emisor o el receptor
+  // coincide con un Cliente configurado; si no, queda null hasta que el
+  // contador la clasifique a mano.
+  clienteId String?
+  cliente   Cliente?    @relation(fields: [clienteId], references: [id], onDelete: SetNull)
+  formato   FormatoDgii?
+
+  // Identificación de la contraparte que sí va al DGII (emisor en 606, receptor en 607)
+  rncCedula        String
+  tipoIdentificacion String // "1" RNC, "2" Cédula, "3" Pasaporte
+
+  // Ambos lados de la transacción tal como los detectó la extracción, editables
+  // en la pantalla de revisión. Independientes de rncCedula/tipoIdentificacion
+  // (que es lo único que se exporta al DGII) — esto es para que el contador
+  // pueda ver y corregir la factura completa, aunque el otro lado no vaya al TXT.
+  nombreEmisor           String?
+  identificacionEmisor   String?
+  nombreReceptor         String?
+  identificacionReceptor String?
+
+  ncf              String
+  ncfModificado    String?
+  fechaComprobante DateTime? // nullable: la IA puede no detectarla; se bloquea en validaciones, no en el esquema
+  fechaRetencionOPago DateTime?
+
+  // Clasificaciones fiscales derivadas o elegidas por el usuario
+  tipoIngreso              String? // 607
+  tipoBienesServicios      String? // 606
+  formaPago                String? // 606
+  tipoRetencionISR         String? // 606
+
+  // Montos (todos Decimal, nunca Float)
+  montoFacturado    Decimal @db.Decimal(18, 2)
+  itbisFacturado    Decimal @default(0) @db.Decimal(18, 2)
+  itbisRetenido     Decimal @default(0) @db.Decimal(18, 2)
+  itbisPercibido    Decimal @default(0) @db.Decimal(18, 2)
+  retencionRenta    Decimal @default(0) @db.Decimal(18, 2)
+  isrPercibido      Decimal @default(0) @db.Decimal(18, 2)
+  isc               Decimal @default(0) @db.Decimal(18, 2)
+  otrosImpuestos    Decimal @default(0) @db.Decimal(18, 2)
+  propinaLegal      Decimal @default(0) @db.Decimal(18, 2)
+
+  // 606 específicos
+  montoServicios          Decimal? @db.Decimal(18, 2)
+  montoBienes             Decimal? @db.Decimal(18, 2)
+  itbisSujetoProporcionalidad Decimal? @db.Decimal(18, 2)
+  itbisLlevadoCosto       Decimal? @db.Decimal(18, 2)
+  itbisPorAdelantar       Decimal? @db.Decimal(18, 2)
+
+  // 607 específicos: distribución de la forma de venta
+  montoEfectivo     Decimal? @db.Decimal(18, 2)
+  montoChequeTransferencia Decimal? @db.Decimal(18, 2)
+  montoTarjeta      Decimal? @db.Decimal(18, 2)
+  montoVentaCredito Decimal? @db.Decimal(18, 2)
+  montoBonos        Decimal? @db.Decimal(18, 2)
+  montoPermuta      Decimal? @db.Decimal(18, 2)
+  montoOtrasFormas  Decimal? @db.Decimal(18, 2)
+
+  confidences    Json? // { campo: number } confianza 0-1 devuelta por Azure
+  regionesOrigen Json? // bounding boxes por campo, para el resaltado en la revisión
+
+  revisada                Boolean       @default(false)
+  clasificacionConfirmada Boolean       @default(false)
+  origen   OrigenFactura @default(IA)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lineas      LineaFactura[]
+  validaciones Validacion[]
+
+  // Prisma no indexa las claves foráneas en PostgreSQL, así que sin esto
+  // `verificarExportable`, `ncfsYaDeclarados` y los agregados de /estadisticas
+  // hacen seq scan sobre toda la tabla.
+  @@index([fechaComprobante])
+  @@index([clienteId, formato])
+  @@index([periodoId])
+  @@index([documentoId])
+  @@map("facturas")
+}
+
+model LineaFactura {
+  id             String  @id @default(uuid())
+  facturaId      String
+  factura        Factura @relation(fields: [facturaId], references: [id], onDelete: Cascade)
+  descripcion    String
+  cantidad       Decimal @default(1) @db.Decimal(18, 4)
+  precioUnitario Decimal @default(0) @db.Decimal(18, 2)
+  importe        Decimal @default(0) @db.Decimal(18, 2)
+  clasificacion  String?
+
+  @@map("lineas_factura")
+}
+
+model Validacion {
+  id        String    @id @default(uuid())
+  facturaId String
+  factura   Factura   @relation(fields: [facturaId], references: [id], onDelete: Cascade)
+  codigo    String
+  severidad Severidad
+  campo     String?
+  mensaje   String
+  createdAt DateTime  @default(now())
+
+  @@index([facturaId, severidad])
+  @@map("validaciones")
+}
+
+model Exportacion {
+  id                String      @id @default(uuid())
+  periodoId         String
+  periodo           Periodo     @relation(fields: [periodoId], references: [id], onDelete: Cascade)
+  tipo              String // "TXT" | "EXCEL"
+  rutaArchivo       String
+  sha256            String
+  cantidadRegistros Int
+  createdAt         DateTime    @default(now())
+
+  @@index([createdAt])
+  @@map("exportaciones")
+}
+
+model ReglaComercio {
+  id                   String   @id @default(uuid())
+  rnc                  String   @unique
+  nombre               String
+  clienteId            String?
+  cliente              Cliente? @relation(fields: [clienteId], references: [id], onDelete: SetNull)
+  formato              FormatoDgii?
+  tipoIngreso          String?
+  formaVenta           String?  // 607: columna de distribución
+  tipoBienesServicios  String?
+  formaPago            String?
+  vecesAplicada        Int      @default(0)
+  activo               Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@map("reglas_comercio")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  entidad    String
+  entidadId  String
+  accion     String
+  antes      Json?
+  despues    Json?
+  createdAt  DateTime @default(now())
+
+  @@map("audit_logs")
+}

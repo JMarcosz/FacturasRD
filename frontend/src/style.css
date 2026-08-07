@@ -1,0 +1,120 @@
+/*
+ * Tokens del rediseño. La app es SOLO clara — no hay `prefers-color-scheme`
+ * ni selector de modo oscuro: el diseño define una sola superficie.
+ *
+ * Las utilidades antiguas (.btn, .card, .table, .badge, .stack, .row, .field…)
+ * se eliminaron: todo componente visual sale ahora de PrimeVue o de
+ * `components/ui/`.
+ */
+:root {
+  /* Marca */
+  --teal: #0f766e;
+  --teal-oscuro: #115e59;
+  --teal-suave: #f0fdfa;
+  --teal-borde: #ccfbf1;
+
+  /* Texto */
+  --texto: #16181d;
+  --texto-medio: #4b5563;
+  --texto-suave: #6b7280;
+  --texto-tenue: #8b929e;
+  --texto-debil: #a2a8b3;
+
+  /* Superficies */
+  --fondo: #eef0f3;
+  --superficie: #ffffff;
+  --superficie-alt: #fbfbfc;
+  --superficie-tenue: #fafbfc;
+  --borde: #e6e8ec;
+  --borde-fuerte: #e2e5ea;
+  --borde-tenue: #eef0f3;
+
+  /* Semánticos */
+  --ok: #067647;
+  --ok-fondo: #ecfdf3;
+  --ok-borde: #abefc6;
+  --alerta: #b54708;
+  --alerta-fondo: #fffaeb;
+  --alerta-borde: #fedf89;
+  --error: #b42318;
+  --error-fondo: #fef3f2;
+  --error-borde: #fecdca;
+  --info: #1d4ed8;
+  --info-fondo: #eff6ff;
+  --info-borde: #bfdbfe;
+  --indigo: #4338ca;
+  --indigo-fondo: #eef2ff;
+
+  /* Forma */
+  --radio-tarjeta: 13px;
+  --radio-control: 9px;
+  --radio-chip: 999px;
+
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font: 15px/1.5 'Plus Jakarta Sans', system-ui, 'Segoe UI', Roboto, sans-serif;
+  color: var(--texto);
+  background: var(--fondo);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 0.5em;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+a {
+  color: var(--teal);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--teal-oscuro);
+  text-decoration: underline;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d4d8de;
+  border-radius: var(--radio-chip);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+/* Tabla del diseño: cabecera tenue, filas con separador fino. */
+.p-datatable .p-datatable-thead > tr > th {
+  background: var(--superficie-tenue);
+  color: var(--texto-debil);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--borde-tenue);
+}
+.p-datatable .p-datatable-tbody > tr > td {
+  border-bottom: 1px solid #f2f4f6;
+  font-size: 12.5px;
+}

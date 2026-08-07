@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm -rf \"test-lote\")",
+      "Bash(rmdir /s /q \"test-lote\")"
+    ]
+  }
+}

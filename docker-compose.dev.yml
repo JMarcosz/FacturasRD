@@ -1,0 +1,111 @@
+# Modo desarrollo: monta el código fuente como volumen y corre los watchers
+# nativos de cada proyecto (nest start --watch / vite) dentro del contenedor,
+# así los cambios se reflejan al instante sin rebuildar la imagen.
+#
+# Uso:
+#   docker compose -f docker-compose.dev.yml up
+#   (Ctrl+C para parar; los node_modules quedan en volúmenes con nombre así
+#   el próximo "up" no reinstala todo de cero.)
+#
+# Para migraciones nuevas del schema (`prisma migrate dev`, que es
+# interactivo) usá:
+#   docker compose -f docker-compose.dev.yml exec backend pnpm prisma:migrate
+#
+# OJO: `prisma migrate dev` RESETEA la base si detecta drift. Para solo aplicar
+# migraciones ya existentes, usá `pnpm prisma:migrate:deploy`, que nunca borra.
+
+# Nombre de proyecto propio. Sin esto Compose lo deriva del nombre de la
+# carpeta y coincide con el de docker-compose.yml: ambos stacks generarían los
+# mismos nombres de contenedor ("proyectofacturas-db-1") y compartirían la red,
+# de modo que levantar uno le robaba los contenedores al otro y le cambiaba el
+# volumen de datos debajo — y bajar producción dejaba la red "in use".
+name: proyectofacturas-dev
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    image: node:24-alpine
+    working_dir: /app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - backend/.env
+    environment:
+      # Dentro de la red de Docker el host de Postgres es "db", no "localhost"
+      # (igual que en docker-compose.yml de producción).
+      DATABASE_URL: postgresql://facturas:12345678@db:5432/facturas?schema=public
+      # nest start --watch compila con "tsc --watch", que por defecto usa
+      # fs.watch nativo — no siempre detecta cambios en un bind mount de
+      # Windows/macOS. Estas dos variables (las que TypeScript realmente lee)
+      # fuerzan polling para que sí los detecte.
+      TSC_WATCHFILE: PriorityPollingInterval
+      TSC_WATCHDIRECTORY: DynamicPriorityPolling
+      # Misma ruta que en producción: `Documento.rutaArchivo` guarda rutas
+      # ABSOLUTAS, así que si aquí apuntara a otro sitio los documentos ya
+      # subidos darían 404 al abrir el visor.
+      UPLOAD_DIR: /data/uploads
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./backend:/app
+      # Se comparte el volumen de subidas con el stack de producción para
+      # trabajar en local contra los documentos reales.
+      - uploads:/data/uploads
+      # Volumen con nombre para node_modules: si el bind mount de arriba
+      # expusiera el node_modules del host (compilado para Windows), Prisma
+      # rompería porque sus binarios nativos son por SO. Este volumen hace
+      # que el node_modules del contenedor (Linux) viva aparte y persista
+      # entre "up"/"down".
+      - backend_node_modules:/app/node_modules
+    command: sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm prisma:generate && pnpm prisma:migrate:deploy && pnpm start:dev"
+
+  frontend:
+    image: node:24-alpine
+    working_dir: /app
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      # vite.config.ts usa esto para el proxy de /api en vez de localhost:3000
+      # (que dentro del contenedor del frontend sería el propio contenedor).
+      VITE_API_PROXY_TARGET: http://backend:3000
+      CHOKIDAR_USEPOLLING: 'true'
+    ports:
+      - '5173:5173'
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    # `pnpm exec vite` y no `pnpm dev -- --host`: pnpm reenvía el "--" literal y
+    # Vite lo trata como fin de opciones, así que el --host se perdía y el
+    # servidor quedaba escuchando solo dentro del contenedor.
+    command: sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm exec vite --host 0.0.0.0"
+
+# Todos los volúmenes llevan nombre explícito para que el cambio de nombre de
+# proyecto (arriba) no los renombre y haya que reinstalar o re-migrar de cero.
+volumes:
+  pgdata_dev:
+    name: proyectofacturas_pgdata_dev
+  backend_node_modules:
+    name: proyectofacturas_backend_node_modules
+  frontend_node_modules:
+    name: proyectofacturas_frontend_node_modules
+  # El mismo volumen que usa docker-compose.yml, para que en desarrollo se
+  # trabaje contra los documentos ya subidos y el visor funcione.
+  uploads:
+    name: proyectofacturas_uploads

@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - '5432:5432'
+    healthcheck:
+      # "$$" es literal para Docker Compose: deja que la variable la resuelva
+      # el shell DENTRO del contenedor (que sí tiene POSTGRES_USER vía env_file).
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - backend/.env
+    environment:
+      # Dentro de la red de Docker el host de Postgres es "db", no "localhost"
+      # (el DATABASE_URL de backend/.env es para cuando corres el backend
+      # en local). Esto se aplica a TODO proceso del contenedor, incluido
+      # "docker compose exec app ..." — por eso va aquí y no en el arranque.
+      # Si cambias POSTGRES_USER/PASSWORD/DB en backend/.env, actualiza esta
+      # línea también.
+      DATABASE_URL: postgresql://facturas:12345678@db:5432/facturas?schema=public
+      UPLOAD_DIR: /data/uploads
+      PORT: 3000
+    ports:
+      - '3000:3000'
+    volumes:
+      - uploads:/data/uploads
+
+volumes:
+  pgdata:
+  uploads:
