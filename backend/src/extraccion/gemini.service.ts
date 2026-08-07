@@ -227,8 +227,13 @@ export class GeminiExtractorService implements IInvoiceExtractor {
 
         const uso = respuesta.usageMetadata;
         if (uso) {
+          // `thoughtsTokenCount`: tokens de "pensamiento" que el modelo genera
+          // antes de la respuesta visible — no aparecen en `candidatesTokenCount`
+          // pero cuestan tiempo de decodificado igual. Sin este número no hay
+          // forma de saber si desactivar el thinking budget tiene algo que ganar.
           this.logger.log(
-            `Gemini uso: ${uso.promptTokenCount} entrada + ${uso.candidatesTokenCount} salida = ${uso.totalTokenCount} tokens`,
+            `Gemini uso: ${uso.promptTokenCount} entrada + ${uso.candidatesTokenCount} salida + ` +
+              `${uso.thoughtsTokenCount ?? 0} pensamiento = ${uso.totalTokenCount} tokens`,
           );
         }
         return respuesta;
