@@ -97,7 +97,10 @@ export const ESQUEMA_HECHOS: Schema = {
 
 const ESQUEMA_CONFIDENCES: Schema = {
   type: Type.ARRAY,
-  description: 'Confianza (0 a 1) autoevaluada por el modelo, una entrada por cada campo de "hechos" que no sea null.',
+  description:
+    'Confianza (0 a 1) autoevaluada por el modelo, SOLO para los campos de "hechos" que reconozcas con dudas ' +
+    '(confianza menor a 0.85). Omite por completo los campos que leas con seguridad — la app los trata como ' +
+    'confiables cuando no aparecen aquí. Esto no es una lista completa de los 16 campos, es solo la lista de excepciones.',
   items: {
     type: Type.OBJECT,
     properties: {
@@ -108,12 +111,24 @@ const ESQUEMA_CONFIDENCES: Schema = {
   },
 };
 
+/**
+ * No es un volcado OCR completo a propósito: `reforzarConPatrones` solo hace
+ * regex sobre RNC/Cédula, NCF, ITBIS y forma de pago (`patrones-rd.ts`), así
+ * que pedirle al modelo el resto de la factura (líneas de productos,
+ * direcciones, textos legales) es tokens de salida que nadie lee después.
+ */
+const DESCRIPCION_TEXTO_RESPALDO =
+  'Copia EXACTA (sin corregir ni interpretar) de únicamente las líneas del documento que contengan: ' +
+  'el RNC/Cédula del emisor y del receptor con su etiqueta (ej. "RNC:", "Cédula:"), el NCF completo, ' +
+  'el monto de ITBIS, y la forma o condición de pago. Omite el resto del documento (productos, ' +
+  'direcciones, textos legales). Si alguna de estas líneas no existe, no la incluyas.';
+
 export const ESQUEMA_RESPUESTA_GEMINI: Schema = {
   type: Type.OBJECT,
   properties: {
     hechos: ESQUEMA_HECHOS,
     confidences: ESQUEMA_CONFIDENCES,
-    textoCompleto: { type: Type.STRING, description: 'Todo el texto reconocido en el documento, en orden de lectura.' },
+    textoCompleto: { type: Type.STRING, description: DESCRIPCION_TEXTO_RESPALDO },
   },
   required: ['hechos', 'confidences', 'textoCompleto'],
 };
@@ -133,7 +148,7 @@ export const ESQUEMA_LOTE_GEMINI: Schema = {
           },
           hechos: ESQUEMA_HECHOS,
           confidences: ESQUEMA_CONFIDENCES,
-          textoCompleto: { type: Type.STRING, description: 'Todo el texto reconocido en ESTA imagen puntual.' },
+          textoCompleto: { type: Type.STRING, description: `${DESCRIPCION_TEXTO_RESPALDO} Solo de ESTA imagen puntual.` },
         },
         required: ['indiceImagen', 'hechos', 'confidences', 'textoCompleto'],
       },
