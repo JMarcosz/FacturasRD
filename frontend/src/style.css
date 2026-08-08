@@ -83,6 +83,32 @@ a:hover {
   text-decoration: underline;
 }
 
+/* Foco visible global: solo con teclado (`:focus-visible`), para no dibujar
+   el anillo en cada click de mouse. Antes de esto solo existía una regla de
+   foco en todo el proyecto. */
+:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Enlace "Ir al contenido": oculto hasta que recibe foco por teclado,
+   primer elemento tabulable de la app (ver AppLayout.vue). */
+.saltar-contenido {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 1000;
+  padding: 10px 16px;
+  background: var(--teal-oscuro);
+  color: #fff;
+  border-radius: 0 0 var(--radio-control) 0;
+  font-weight: 600;
+}
+.saltar-contenido:focus-visible {
+  left: 0;
+}
+
 button,
 input,
 select {
@@ -104,6 +130,25 @@ select {
   background-clip: content-box;
 }
 
+/*
+ * Puntos de quiebre comunes. Van como comentario y no como custom properties
+ * porque CSS no admite `var()` dentro de una `@media`; el valor se repite
+ * literal en cada vista, pero el significado es este y solo este:
+ *
+ *   1200px  Layouts de dos paneles → una columna
+ *   1024px  Barra lateral → menú contraíble; columnas laterales apilan
+ *    768px  Cuadrículas de 3-4 columnas → 2; cabeceras apilan
+ *    480px  Todo a una columna; controles a ancho completo
+ */
+
+/* Ningún diálogo puede ser más ancho que la pantalla. PrimeVue aplica el
+   `width` que se le pasa en píxeles tal cual, así que uno de 540px se sale
+   por los dos lados en un teléfono de 375px. Se acota aquí, una vez, en vez
+   de recordar añadir `max-width` en cada `<Dialog>`. */
+.p-dialog {
+  max-width: 92vw;
+}
+
 /* Tabla del diseño: cabecera tenue, filas con separador fino. */
 .p-datatable .p-datatable-thead > tr > th {
   background: var(--superficie-tenue);
@@ -117,4 +162,24 @@ select {
 .p-datatable .p-datatable-tbody > tr > td {
   border-bottom: 1px solid #f2f4f6;
   font-size: 12.5px;
+}
+
+/* ── Responsive global ── */
+.tabla-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 480px) {
+  .p-dialog {
+    max-width: 96vw;
+  }
+}
+
+/* Estilo del item de peligro en el Menu popup de acciones en lote */
+.menu-peligro .p-menuitem-text {
+  color: var(--error) !important;
+}
+.menu-peligro .p-menuitem-icon {
+  color: var(--error) !important;
 }

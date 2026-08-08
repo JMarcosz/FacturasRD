@@ -76,6 +76,22 @@ export function normalizarIdentificacion(valor: string): string {
 }
 
 /**
+ * El lado de la transacción que efectivamente se declara al DGII: emisor en
+ * 606 (compra — el proveedor), receptor en 607 (venta — el comprador). No es
+ * una columna propia (la factura ya no guarda `rncCedula`): se deriva en
+ * vivo de `formato` + los dos lados extraídos, para no tener dos campos
+ * guardando el mismo dato desde perspectivas distintas.
+ */
+export function identificacionDeclarada(
+  formato: 'F606' | 'F607' | null,
+  f: { identificacionEmisor: string | null; identificacionReceptor: string | null },
+): string {
+  if (formato === 'F607') return f.identificacionReceptor ?? '';
+  if (formato === 'F606') return f.identificacionEmisor ?? '';
+  return '';
+}
+
+/**
  * Deja la identificación como debe GUARDARSE: sin los separadores que el OCR
  * arrastra del papel (guiones, puntos, espacios, barras) pero conservando las
  * letras, porque un pasaporte las lleva y es una identificación válida ante la

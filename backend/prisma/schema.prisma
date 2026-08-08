@@ -176,14 +176,17 @@ model Factura {
   cliente   Cliente?    @relation(fields: [clienteId], references: [id], onDelete: SetNull)
   formato   FormatoDgii?
 
-  // Identificación de la contraparte que sí va al DGII (emisor en 606, receptor en 607)
-  rncCedula        String
+  // tipoIdentificacion no es 100% derivable solo por longitud de dígitos (los
+  // pasaportes son alfanuméricos), así que se guarda explícitamente en vez de
+  // recalcularse siempre.
   tipoIdentificacion String // "1" RNC, "2" Cédula, "3" Pasaporte
 
   // Ambos lados de la transacción tal como los detectó la extracción, editables
-  // en la pantalla de revisión. Independientes de rncCedula/tipoIdentificacion
-  // (que es lo único que se exporta al DGII) — esto es para que el contador
-  // pueda ver y corregir la factura completa, aunque el otro lado no vaya al TXT.
+  // en la pantalla de revisión. Independientes de tipoIdentificacion. El valor
+  // que va al DGII ya no se guarda aparte: se deriva de formato +
+  // identificacionEmisor/identificacionReceptor en el momento de
+  // validar/exportar (emisor en 606, receptor en 607) — ver
+  // dgii/rnc.ts:identificacionDeclarada.
   nombreEmisor           String?
   identificacionEmisor   String?
   nombreReceptor         String?

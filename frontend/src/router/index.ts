@@ -23,12 +23,10 @@ const router = createRouter({
       component: () => import('../views/FacturasView.vue'),
       meta: { titulo: 'Facturas' },
     },
-    {
-      path: '/facturas/triaje',
-      name: 'triaje',
-      component: () => import('../views/TriajeView.vue'),
-      meta: { titulo: 'Triaje' },
-    },
+    // /facturas/triaje desapareció: era una pantalla propia que agrupaba por
+    // comercio las facturas sin clasificar o sin confirmar — ambas cosas ya
+    // se ven en Facturas con la vista rápida "Por confirmar" (ver AppLayout,
+    // que redirige el ítem "Triaje" del menú a /facturas?vista=por_confirmar).
     {
       path: '/facturas/:facturaId',
       name: 'factura-detalle',
@@ -56,13 +54,12 @@ const router = createRouter({
     },
     // La antigua ruta /periodos/:id/exportar desapareció: exportar es ahora un
     // bloque dentro de Reportería, como en el diseño.
-    {
-      path: '/periodos/:periodoId/revision',
-      name: 'revision',
-      component: () => import('../views/RevisionView.vue'),
-      props: true,
-      meta: { titulo: 'Revisión en lote' },
-    },
+    //
+    // /periodos/:periodoId/revision también desapareció: era una segunda
+    // pantalla de trabajo en lote que duplicaba las acciones de Facturas
+    // (asignar cliente, editar en lote, eliminar) sobre las facturas de un
+    // único período. Sus enlaces de entrada llevan ahora a Facturas filtrada
+    // por ese cliente.
   ],
 });
 

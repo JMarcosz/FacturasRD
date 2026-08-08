@@ -27,6 +27,17 @@ function tonoConfianza(c: number | null): 'ok' | 'alerta' | 'error' | 'neutro' {
   if (c >= 0.8) return 'alerta';
   return 'error';
 }
+
+/** El lado declarado a la DGII: emisor en 606, receptor en 607 — ver FacturaDetalleView.vue. */
+function identificacionDeclaradaDe(f: {
+  formato: string | null;
+  identificacionEmisor: string | null;
+  identificacionReceptor: string | null;
+}): string {
+  if (f.formato === 'F607') return f.identificacionReceptor ?? '';
+  if (f.formato === 'F606') return f.identificacionEmisor ?? '';
+  return '';
+}
 </script>
 
 <template>
@@ -67,7 +78,7 @@ function tonoConfianza(c: number | null): 'ok' | 'alerta' | 'error' | 'neutro' {
           <tbody>
             <tr>
               <td class="tabla__campo">RNC / Cédula</td>
-              <td>{{ diagnostico.factura.rncCedula || '—' }}</td>
+              <td>{{ identificacionDeclaradaDe(diagnostico.factura) || '—' }}</td>
             </tr>
             <tr>
               <td class="tabla__campo">NCF</td>

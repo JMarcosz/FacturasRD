@@ -47,7 +47,14 @@ export const FORMAS_PAGO_606: readonly EntradaCatalogo[] = [
   { codigo: '07', descripcion: 'Mixto' },
 ] as const;
 
-/** Tipo de comprobante según los 2 dígitos que siguen a la letra del NCF. */
+/**
+ * Tipo de comprobante según los 2 dígitos que siguen a la letra del NCF.
+ * 01-17 son del NCF de papel (Norma 06-2018); 31-47 son su equivalente e-CF
+ * (Ley 32-23) — hoy la inmensa mayoría de las facturas reales son e-CF, así
+ * que dejarlos fuera hacía que "Tipo de NCF" saliera "no reconocido" para
+ * casi todo, y que la validación bloqueara el TXT con un NCF_TIPO_NO_PERMITIDO
+ * completamente falso.
+ */
 export const TIPOS_NCF: readonly EntradaCatalogo[] = [
   { codigo: '01', descripcion: 'Crédito Fiscal' },
   { codigo: '02', descripcion: 'Consumo' },
@@ -60,10 +67,20 @@ export const TIPOS_NCF: readonly EntradaCatalogo[] = [
   { codigo: '15', descripcion: 'Gubernamental' },
   { codigo: '16', descripcion: 'Exportaciones' },
   { codigo: '17', descripcion: 'Pagos al Exterior' },
+  { codigo: '31', descripcion: 'Factura de Crédito Fiscal Electrónica' },
+  { codigo: '32', descripcion: 'Factura de Consumo Electrónica' },
+  { codigo: '33', descripcion: 'Nota de Débito Electrónica' },
+  { codigo: '34', descripcion: 'Nota de Crédito Electrónica' },
+  { codigo: '41', descripcion: 'Comprobante Electrónico de Compras' },
+  { codigo: '43', descripcion: 'Comprobante Electrónico para Gastos Menores' },
+  { codigo: '44', descripcion: 'Comprobante Electrónico para Regímenes Especiales de Tributación' },
+  { codigo: '45', descripcion: 'Comprobante Electrónico Gubernamental' },
+  { codigo: '46', descripcion: 'Comprobante Electrónico para Exportaciones' },
+  { codigo: '47', descripcion: 'Comprobante Electrónico para Pagos al Exterior' },
 ] as const;
 
 /** Tipos de NCF que representan notas de crédito y por tanto exigen "NCF Modificado". */
-export const TIPOS_NCF_NOTA_CREDITO: ReadonlySet<string> = new Set(['04']);
+export const TIPOS_NCF_NOTA_CREDITO: ReadonlySet<string> = new Set(['04', '34']);
 
 function buscar(catalogo: readonly EntradaCatalogo[], codigo: string): EntradaCatalogo | undefined {
   return catalogo.find((e) => e.codigo === codigo);

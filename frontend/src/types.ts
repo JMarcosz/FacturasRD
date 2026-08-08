@@ -69,7 +69,6 @@ export interface Factura {
   clienteId: string | null;
   formato: Formato | null;
   cliente?: { id: string; nombre: string; rnc: string } | null;
-  rncCedula: string;
   tipoIdentificacion: string;
   nombreEmisor: string | null;
   identificacionEmisor: string | null;
@@ -188,7 +187,7 @@ export interface TotalesMes {
   escaneadas: number;
   clasificadas: number;
   sinClasificar: number;
-  revisadas: number;
+  confirmadas: number;
   exportadas: number;
   conErrorValidacion: number;
   montoFacturado: string;
@@ -198,7 +197,7 @@ export interface TotalesMes {
 export interface RollupFormato {
   formato: Formato | null;
   escaneadas: number;
-  revisadas: number;
+  confirmadas: number;
   conErrorValidacion: number;
   montoFacturado: string;
   itbisFacturado: string;
@@ -210,7 +209,7 @@ export interface RollupCliente {
   nombre: string | null;
   rnc: string | null;
   escaneadas: number;
-  revisadas: number;
+  confirmadas: number;
   conErrorValidacion: number;
   montoFacturado: string;
   itbisFacturado: string;

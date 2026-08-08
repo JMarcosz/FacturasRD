@@ -12,9 +12,9 @@ import { buscarPeriodo } from '../api/periodos';
 import { listarFacturasPorPeriodo } from '../api/facturas';
 import {
   descargarExcel,
+  descargarExcelCompleto,
   descargarExcelPorRango,
   descargarExportacionGuardada,
-  descargarTxt,
   exportacionesRecientes,
   verificarExportable,
 } from '../api/exportacion';
@@ -37,7 +37,7 @@ const sinResultado = ref(false);
 const periodo = ref<Periodo | null>(null);
 const estado = ref<EstadoExportable | null>(null);
 const totales = reactive({ monto: '0', itbis: '0' });
-const descargando = ref<'txt' | 'excel' | null>(null);
+const descargando = ref<'excel' | null>(null);
 
 const puedeBuscar = computed(() => Boolean(declaracion.clienteId && declaracion.mes));
 
@@ -87,11 +87,11 @@ watch(() => [declaracion.clienteId, declaracion.formato, declaracion.mes], () =>
   }
 });
 
-async function bajar(tipo: 'txt' | 'excel') {
+async function bajar() {
   if (!periodo.value) return;
-  descargando.value = tipo;
+  descargando.value = 'excel';
   try {
-    await (tipo === 'txt' ? descargarTxt(periodo.value.id) : descargarExcel(periodo.value.id));
+    await descargarExcel(periodo.value.id);
     await cargarRecientes();
     toast.add({ severity: 'success', summary: 'Archivo generado', life: 3000 });
   } catch (e: any) {
@@ -140,6 +140,26 @@ async function bajarRango() {
     });
   } finally {
     generandoRango.value = false;
+  }
+}
+
+const generandoCompleto = ref(false);
+
+/** Mismo cliente/rango del bloque de arriba — el formato no aplica aquí, sale todo junto. */
+async function bajarCompleto() {
+  if (!rango.desde || !rango.hasta) return;
+  generandoCompleto.value = true;
+  try {
+    await descargarExcelCompleto(rango.clienteId || undefined, aIso(rango.desde), aIso(rango.hasta));
+  } catch (e: any) {
+    toast.add({
+      severity: 'error',
+      summary: 'No se pudo generar el Excel',
+      detail: e?.response?.data?.message ?? 'Revisa el rango de fechas.',
+      life: 5000,
+    });
+  } finally {
+    generandoCompleto.value = false;
   }
 }
 
@@ -195,9 +215,10 @@ onMounted(async () => {
 
         <div class="campos">
           <div class="campo campo--ancho">
-            <label>Cliente</label>
+            <label for="decl-cliente">Cliente</label>
             <Select
               v-model="declaracion.clienteId"
+              input-id="decl-cliente"
               :options="clientes"
               option-label="nombre"
               option-value="id"
@@ -206,12 +227,27 @@ onMounted(async () => {
             />
           </div>
           <div class="campo">
-            <label>Formato</label>
-            <Select v-model="declaracion.formato" :options="FORMATOS" option-label="label" option-value="value" fluid />
+            <label for="decl-formato">Formato</label>
+            <Select
+              v-model="declaracion.formato"
+              input-id="decl-formato"
+              :options="FORMATOS"
+              option-label="label"
+              option-value="value"
+              fluid
+            />
           </div>
           <div class="campo">
-            <label>Mes</label>
-            <DatePicker v-model="declaracion.mes" view="month" date-format="MM yy" show-icon icon-display="input" fluid />
+            <label for="decl-mes">Mes</label>
+            <DatePicker
+              v-model="declaracion.mes"
+              input-id="decl-mes"
+              view="month"
+              date-format="MM yy"
+              show-icon
+              icon-display="input"
+              fluid
+            />
           </div>
         </div>
 
@@ -249,12 +285,12 @@ onMounted(async () => {
             <div v-if="estado.sinConfirmar > 0" class="bloqueo-item">
               <i class="pi pi-exclamation-circle" style="color: var(--alerta);"></i>
               <span>{{ estado.sinConfirmar }} sugerencias sin confirmar.</span>
-              <router-link to="/facturas/triaje" class="enlace">Ir a Triaje</router-link>
+              <router-link :to="{ name: 'facturas', query: { vista: 'por_confirmar' } }" class="enlace">Ir a Triaje</router-link>
             </div>
             <div v-if="estado.errores.length > 0" class="bloqueo-item">
               <i class="pi pi-times-circle" style="color: var(--error);"></i>
               <span>{{ estado.errores.length }} errores de validación.</span>
-              <router-link :to="{ name: 'revision', params: { periodoId: periodo.id } }" class="enlace">Revisar en lote</router-link>
+              <router-link :to="{ name: 'facturas', query: { clienteId: periodo.clienteId } }" class="enlace">Ir a Facturas</router-link>
             </div>
             <ul v-if="estado.errores.length" class="errores">
               <li v-for="(e, i) in estado.errores.slice(0, 5)" :key="i"><strong>{{ e.codigo }}</strong>: {{ e.mensaje }}</li>
@@ -266,25 +302,17 @@ onMounted(async () => {
 
           <div class="acciones">
             <Button
-              label="Revisar en lote"
+              label="Ir a Facturas"
               outlined
               size="small"
-              @click="$router.push({ name: 'revision', params: { periodoId: periodo.id } })"
+              @click="$router.push({ name: 'facturas', query: { clienteId: periodo.clienteId } })"
             />
             <Button
-              label="Descargar TXT DGII"
-              size="small"
-              :disabled="!estado.puedeExportar"
-              :loading="descargando === 'txt'"
-              @click="bajar('txt')"
-            />
-            <Button
-              label="Excel de respaldo"
-              outlined
+              label="Descargar Excel 606/607"
               size="small"
               :disabled="!estado.puedeExportar"
               :loading="descargando === 'excel'"
-              @click="bajar('excel')"
+              @click="bajar()"
             />
           </div>
         </div>
@@ -303,9 +331,10 @@ onMounted(async () => {
 
           <div class="campos">
             <div class="campo campo--ancho">
-              <label>Cliente</label>
+              <label for="rango-cliente">Cliente</label>
               <Select
                 v-model="rango.clienteId"
+                input-id="rango-cliente"
                 :options="opcionesClienteRango"
                 option-label="nombre"
                 option-value="id"
@@ -313,27 +342,48 @@ onMounted(async () => {
               />
             </div>
             <div class="campo campo--ancho">
-              <label>Formato</label>
-              <Select v-model="rango.formato" :options="FORMATOS" option-label="label" option-value="value" fluid />
+              <label for="rango-formato">Formato</label>
+              <Select
+                v-model="rango.formato"
+                input-id="rango-formato"
+                :options="FORMATOS"
+                option-label="label"
+                option-value="value"
+                fluid
+              />
             </div>
             <div class="campo">
-              <label>Desde</label>
-              <DatePicker v-model="rango.desde" date-format="dd/mm/yy" show-icon icon-display="input" fluid />
+              <label for="rango-desde">Desde</label>
+              <DatePicker v-model="rango.desde" input-id="rango-desde" date-format="dd/mm/yy" show-icon icon-display="input" fluid />
             </div>
             <div class="campo">
-              <label>Hasta</label>
-              <DatePicker v-model="rango.hasta" date-format="dd/mm/yy" show-icon icon-display="input" fluid />
+              <label for="rango-hasta">Hasta</label>
+              <DatePicker v-model="rango.hasta" input-id="rango-hasta" date-format="dd/mm/yy" show-icon icon-display="input" fluid />
             </div>
           </div>
 
-          <Button
-            label="Descargar Excel"
-            outlined
-            size="small"
-            :disabled="!rango.desde || !rango.hasta"
-            :loading="generandoRango"
-            @click="bajarRango"
-          />
+          <div class="tarjeta__botones">
+            <Button
+              label="Descargar Excel 606/607"
+              outlined
+              size="small"
+              :disabled="!rango.desde || !rango.hasta"
+              :loading="generandoRango"
+              @click="bajarRango"
+            />
+            <Button
+              label="Descargar todo (Excel)"
+              outlined
+              size="small"
+              :disabled="!rango.desde || !rango.hasta"
+              :loading="generandoCompleto"
+              @click="bajarCompleto"
+            />
+          </div>
+          <p class="ayuda-completo">
+            "Descargar todo" trae cada factura del rango con todos los campos extraídos, esté o no clasificada — sirve
+            para auditar lo que leyó la IA, no reemplaza el 606/607 de la DGII.
+          </p>
         </section>
 
         <!-- ── Exportaciones recientes ── -->
@@ -396,6 +446,17 @@ onMounted(async () => {
 .tarjeta__sub {
   font-size: 11.5px;
   color: var(--texto-tenue);
+}
+.tarjeta__botones {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ayuda-completo {
+  margin: 0;
+  font-size: 11px;
+  color: var(--texto-tenue);
+  line-height: 1.4;
 }
 .icono {
   width: 30px;
@@ -588,5 +649,36 @@ onMounted(async () => {
   .rejilla {
     grid-template-columns: 1fr;
   }
+}
+
+@media (max-width: 640px) {
+  .campos {
+    grid-template-columns: 1fr;
+  }
+  .metricas {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .tarjeta { padding: 16px; gap: 12px; }
+  .icono { width: 26px; height: 26px; font-size: 12px; }
+  .resultado { padding: 12px; }
+}
+
+@media (max-width: 480px) {
+  .tarjeta { padding: 14px; gap: 10px; }
+  .tarjeta__titulo { font-size: 13px; }
+  .icono { width: 24px; height: 24px; font-size: 11px; border-radius: 7px; }
+  .campo { font-size: 12px; }
+  .campo label { font-size: 11px; }
+  .resultado { padding: 10px; gap: 9px; }
+  .resultado__titulo { font-size: 12px; }
+  .metrica__label { font-size: 10px; }
+  .metrica__valor { font-size: 12px; }
+  .exportacion { padding: 7px 0; gap: 8px; }
+  .exportacion__nombre { font-size: 12px; }
+  .exportacion__detalle { font-size: 10.5px; }
+  .exportacion__bajar { font-size: 11px; }
 }
 </style>

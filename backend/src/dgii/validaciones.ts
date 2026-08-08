@@ -24,10 +24,14 @@ function yyyymmDe(fecha: Date): string {
 function validarComun(
   f: { rncCedula: string; tipoIdentificacion: string; ncf: string; ncfModificado: string | null; fechaComprobante: Date | null },
   contexto: ContextoValidacion,
-  opciones: { permitirIdentificacionVaciaEnConsumo?: boolean } = {},
+  opciones: {
+    permitirIdentificacionVaciaEnConsumo?: boolean;
+    campoIdentificacion: 'identificacionEmisor' | 'identificacionReceptor';
+  },
 ): ResultadoValidacion[] {
   const resultados: ResultadoValidacion[] = [];
   const ncfInfo = parsearNcf(f.ncf || '');
+  const campoId = opciones.campoIdentificacion;
 
   // NCF tipo 02 (Consumo) es una venta a consumidor final: la DGII no exige
   // identificar al comprador ahí — es la realidad de cualquier venta de
@@ -38,12 +42,12 @@ function validarComun(
 
   if (!f.rncCedula) {
     if (!esConsumoFinalSinIdentificacion) {
-      resultados.push(err('IDENTIFICACION_FALTANTE', 'rncCedula', 'No se detectó RNC/Cédula.'));
+      resultados.push(err('IDENTIFICACION_FALTANTE', campoId, 'No se detectó RNC/Cédula.'));
     }
   } else if (f.tipoIdentificacion === '1' && !validarRnc(f.rncCedula)) {
-    resultados.push(err('RNC_INVALIDO', 'rncCedula', `El RNC "${f.rncCedula}" no pasa el dígito verificador.`));
+    resultados.push(err('RNC_INVALIDO', campoId, `El RNC "${f.rncCedula}" no pasa el dígito verificador.`));
   } else if (f.tipoIdentificacion === '2' && !validarCedula(f.rncCedula)) {
-    resultados.push(err('CEDULA_INVALIDA', 'rncCedula', `La cédula "${f.rncCedula}" no pasa el dígito verificador.`));
+    resultados.push(err('CEDULA_INVALIDA', campoId, `La cédula "${f.rncCedula}" no pasa el dígito verificador.`));
   }
 
   if (!ncfInfo.formatoValido) {
@@ -83,7 +87,7 @@ function validarConfianza(contexto: ContextoValidacion): ResultadoValidacion[] {
 
 export function validarFactura607(f: Factura607ParaValidar, contexto: ContextoValidacion): ResultadoValidacion[] {
   const resultados = [
-    ...validarComun(f, contexto, { permitirIdentificacionVaciaEnConsumo: true }),
+    ...validarComun(f, contexto, { permitirIdentificacionVaciaEnConsumo: true, campoIdentificacion: 'identificacionReceptor' }),
     ...validarConfianza(contexto),
   ];
 
@@ -125,7 +129,10 @@ export function validarFactura607(f: Factura607ParaValidar, contexto: ContextoVa
 }
 
 export function validarFactura606(f: Factura606ParaValidar, contexto: ContextoValidacion): ResultadoValidacion[] {
-  const resultados = [...validarComun(f, contexto), ...validarConfianza(contexto)];
+  const resultados = [
+    ...validarComun(f, contexto, { campoIdentificacion: 'identificacionEmisor' }),
+    ...validarConfianza(contexto),
+  ];
 
   if (f.fechaRetencionOPago && f.fechaComprobante && f.fechaRetencionOPago < f.fechaComprobante) {
     resultados.push(warn('FECHA_PAGO_ANTERIOR', 'fechaRetencionOPago', 'La fecha de pago es anterior a la del comprobante.'));

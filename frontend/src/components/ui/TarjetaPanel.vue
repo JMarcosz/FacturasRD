@@ -62,4 +62,37 @@ withDefaults(defineProps<{ titulo?: string; subtitulo?: string; sinPadding?: boo
   flex-direction: column;
   gap: 12px;
 }
+
+@media (max-width: 768px) {
+  .panel__cabecera {
+    padding: 13px 14px 0;
+  }
+  .panel__cabecera--borde {
+    padding: 13px 14px;
+  }
+  .panel__cuerpo {
+    padding: 14px;
+    gap: 10px;
+  }
+}
+
+@media (max-width: 480px) {
+  .panel {
+    border-radius: 10px;
+  }
+  .panel__cabecera {
+    padding: 12px 14px 0;
+    gap: 8px;
+  }
+  .panel__cabecera--borde {
+    padding: 12px 14px;
+  }
+  .panel__titulo {
+    font-size: 13px;
+  }
+  .panel__cuerpo {
+    padding: 12px 14px;
+    gap: 10px;
+  }
+}
 </style>

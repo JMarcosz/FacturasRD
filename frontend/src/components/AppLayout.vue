@@ -7,6 +7,7 @@ import InputText from 'primevue/inputtext';
 import { useAuthStore } from '../stores/auth';
 import { aYyyymm, obtenerResumen } from '../api/estadisticas';
 import { fmtYyyymm, pct } from '../formato';
+import CintaProgreso from './ui/CintaProgreso.vue';
 import type { ResumenEstadisticas } from '../types';
 
 const props = withDefaults(
@@ -14,8 +15,15 @@ const props = withDefaults(
     mostrarBusqueda?: boolean;
     busqueda?: string;
     placeholderBusqueda?: string;
+    /**
+     * Pantallas de trabajo inmersivo (ej. Detalle de factura) necesitan
+     * ocupar todo el alto disponible y manejar su propio scroll interno por
+     * panel, en vez del scroll de página normal. Opt-in: el resto de las
+     * vistas no lo pasan y siguen creciendo con su contenido como siempre.
+     */
+    pantallaCompleta?: boolean;
   }>(),
-  { mostrarBusqueda: false, busqueda: '', placeholderBusqueda: 'Buscar NCF, RNC o comercio…' },
+  { mostrarBusqueda: false, busqueda: '', placeholderBusqueda: 'Buscar NCF, RNC o comercio…', pantallaCompleta: false },
 );
 
 const emit = defineEmits<{ 'update:busqueda': [valor: string] }>();
@@ -28,6 +36,13 @@ const resumen = ref<ResumenEstadisticas | null>(null);
 // El componente InputText no expone `$el` en sus tipos, así que el atajo ⌘K
 // busca el input real dentro del contenedor.
 const buscadorRef = ref<HTMLElement | null>(null);
+
+/**
+ * Solo tiene efecto por debajo de 1024px: ahí la barra lateral deja de ocupar
+ * su columna fija y pasa a deslizarse por encima del contenido. Por encima de
+ * ese ancho el menú está siempre visible y este estado se ignora.
+ */
+const menuAbierto = ref(false);
 
 interface ItemNav {
   label: string;
@@ -49,6 +64,8 @@ const navGroups: Array<{ titulo: string; items: ItemNav[] }> = [
         contador: () => resumen.value?.mes.sinClasificar ?? 0,
         tono: 'alerta',
       },
+      // 'triaje' ya no es una ruta propia — ver el caso especial en ir()/activo():
+      // la antigua pantalla se consolidó como un filtro dentro de Facturas.
       { label: 'Triaje', icono: 'pi-list-check', ruta: 'triaje' },
       { label: 'Clientes', icono: 'pi-users', ruta: 'clientes' },
     ],
@@ -56,12 +73,6 @@ const navGroups: Array<{ titulo: string; items: ItemNav[] }> = [
   {
     titulo: 'Cierre fiscal',
     items: [
-      {
-        label: 'Revisión en lote',
-        icono: 'pi-check-square',
-        contador: () => resumen.value?.mes.conErrorValidacion ?? 0,
-        tono: 'error',
-      },
       { label: 'Reportería', icono: 'pi-file-export', ruta: 'reporteria' },
       { label: 'Períodos', icono: 'pi-calendar-clock' },
     ],
@@ -78,12 +89,21 @@ const navGroups: Array<{ titulo: string; items: ItemNav[] }> = [
 
 function activo(item: ItemNav): boolean {
   if (!item.ruta) return false;
-  if (item.ruta === 'facturas') return route.name === 'facturas' || route.name === 'factura-detalle';
-  if (item.ruta === 'reporteria') return route.name === 'reporteria' || route.name === 'revision';
+  // Triaje es la cola "clasificada pero sin confirmar" dentro de Facturas, no
+  // una ruta propia: se distingue por la vista activa, no por el nombre.
+  if (item.ruta === 'triaje') return route.name === 'facturas' && route.query.vista === 'por_confirmar';
+  if (item.ruta === 'facturas') {
+    return (route.name === 'facturas' && route.query.vista !== 'por_confirmar') || route.name === 'factura-detalle';
+  }
+  if (item.ruta === 'reporteria') return route.name === 'reporteria';
   return route.name === item.ruta;
 }
 
 function ir(item: ItemNav) {
+  if (item.ruta === 'triaje') {
+    router.push({ name: 'facturas', query: { vista: 'por_confirmar' } });
+    return;
+  }
   if (item.ruta) router.push({ name: item.ruta });
 }
 
@@ -132,6 +152,7 @@ function onAtajo(ev: KeyboardEvent) {
     ev.preventDefault();
     buscadorRef.value?.querySelector('input')?.focus();
   }
+  if (ev.key === 'Escape' && menuAbierto.value) menuAbierto.value = false;
 }
 
 function salir() {
@@ -147,14 +168,27 @@ onUnmounted(() => window.removeEventListener('keydown', onAtajo));
 
 // Al cambiar de pantalla los contadores pueden haber cambiado (se clasificó,
 // se borró, se revisó) — se refrescan sin que cada vista tenga que avisar.
-watch(() => route.name, cargarResumen);
+// En móvil además se cierra el menú: navegar ES la señal de que terminaste con él.
+watch(
+  () => route.name,
+  () => {
+    cargarResumen();
+    menuAbierto.value = false;
+  },
+);
 
 defineExpose({ refrescarResumen: cargarResumen });
 </script>
 
 <template>
   <div class="marco">
-    <aside class="lateral">
+    <a href="#contenido-principal" class="saltar-contenido">Ir al contenido</a>
+
+    <!-- Solo existe cuando el menú está desplegado sobre el contenido (móvil):
+         cerrar tocando fuera es el gesto que la gente intenta primero. -->
+    <div v-if="menuAbierto" class="velo" @click="menuAbierto = false"></div>
+
+    <aside class="lateral" :class="{ 'lateral--abierto': menuAbierto }">
       <RouterLink to="/dashboard" class="marca">
         <div class="marca__logo">FR</div>
         <div class="marca__texto">
@@ -215,13 +249,24 @@ defineExpose({ refrescarResumen: cargarResumen });
             <span class="usuario__nombre">{{ auth.usuario?.nombre ?? '—' }}</span>
             <span class="usuario__rol">{{ rolLegible }}</span>
           </div>
-          <i class="pi pi-sign-out usuario__salir" title="Cerrar sesión" @click="salir"></i>
+          <button type="button" class="usuario__salir" title="Cerrar sesión" aria-label="Cerrar sesión" @click="salir">
+            <i class="pi pi-sign-out"></i>
+          </button>
         </div>
       </div>
     </aside>
 
     <div class="contenido">
       <header class="topbar">
+        <button
+          type="button"
+          class="hamburguesa"
+          :aria-expanded="menuAbierto"
+          aria-label="Abrir menú de navegación"
+          @click="menuAbierto = !menuAbierto"
+        >
+          <i class="pi" :class="menuAbierto ? 'pi-times' : 'pi-bars'"></i>
+        </button>
         <div class="miga">
           <i class="pi pi-home" style="font-size: 12.5px"></i>
           <i class="pi pi-angle-right" style="font-size: 11px"></i>
@@ -240,7 +285,12 @@ defineExpose({ refrescarResumen: cargarResumen });
         <slot name="acciones" />
       </header>
 
-      <main class="principal">
+      <!-- No en pantallas de pantalla completa (Detalle de factura): ahí la
+           altura fija de `.principal--completa` ya está calculada para el
+           alto exacto de la topbar, y la cinta rompería esa cuenta. -->
+      <CintaProgreso v-if="!props.pantallaCompleta" :resumen="resumen" />
+
+      <main id="contenido-principal" class="principal" :class="{ 'principal--completa': props.pantallaCompleta }" tabindex="-1">
         <slot :resumen="resumen" :refrescar-resumen="cargarResumen" />
       </main>
     </div>
@@ -438,9 +488,15 @@ defineExpose({ refrescarResumen: cargarResumen });
   color: var(--texto-tenue);
 }
 .usuario__salir {
+  border: 0;
+  background: transparent;
+  padding: 4px;
   font-size: 12.5px;
   color: var(--texto-tenue);
   cursor: pointer;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
 }
 .usuario__salir:hover {
   color: var(--error);
@@ -466,16 +522,45 @@ defineExpose({ refrescarResumen: cargarResumen });
   align-items: center;
   gap: 16px;
 }
+/* Oculta por defecto: sobre 1024px el menú está siempre a la vista y un botón
+   para abrirlo no significaría nada. */
+.hamburguesa {
+  display: none;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border: 1px solid var(--borde);
+  background: var(--superficie);
+  border-radius: var(--radio-control);
+  place-items: center;
+  cursor: pointer;
+  color: var(--texto-medio);
+  font-size: 15px;
+}
+.hamburguesa:hover {
+  border-color: var(--borde-fuerte);
+  color: var(--teal);
+}
 .miga {
   display: flex;
   align-items: center;
   gap: 7px;
   font-size: 13px;
   color: var(--texto-tenue);
+  min-width: 0;
+}
+.velo {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(16, 20, 26, 0.45);
 }
 .miga__actual {
   color: var(--texto);
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .buscador {
   width: 268px;
@@ -504,5 +589,77 @@ defineExpose({ refrescarResumen: cargarResumen });
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+/* .topbar mide 58px de alto (fijo, ver arriba) — el cálculo se apoya en ese
+   número para que el panel ocupe exactamente el resto del viewport. */
+.principal--completa {
+  padding: 0;
+  gap: 0;
+  height: calc(100vh - 58px);
+  overflow: hidden;
+}
+/* La vista que use pantallaCompleta trae su propio fallback de vuelta al
+   flujo normal en este mismo punto de quiebre — sin este, quedaría atrapada
+   dentro de una altura fija aunque su contenido ya decidió expandirse. */
+@media (max-width: 1200px) {
+  .principal--completa {
+    height: auto;
+    overflow: visible;
+  }
+}
+
+/* ── Menú contraíble ──────────────────────────────────────────────────────
+   Bajo 1024px la lateral deja de ser una columna del flex y se convierte en
+   un panel que se desliza por encima. `visibility` (no solo el translate)
+   es lo que la saca del recorrido del tabulador cuando está cerrada: un menú
+   invisible pero enfocable manda el foco fuera de la pantalla. */
+@media (max-width: 1024px) {
+  .lateral {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 50;
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition: transform 0.22s ease, visibility 0.22s;
+    box-shadow: 0 10px 40px rgba(16, 20, 26, 0.16);
+  }
+  .lateral--abierto {
+    transform: translateX(0);
+    visibility: visible;
+  }
+  .hamburguesa {
+    display: grid;
+  }
+  .topbar {
+    padding: 0 14px;
+    gap: 12px;
+  }
+  .principal {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 768px) {
+  /* El buscador deja de competir por el ancho con la miga de pan: baja a su
+     propia fila, completa. */
+  .topbar {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+  }
+  .buscador {
+    width: 100%;
+    order: 3;
+  }
+  .principal {
+    padding: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lateral {
+    transition: none;
+  }
 }
 </style>

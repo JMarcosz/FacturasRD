@@ -187,11 +187,14 @@ export function derivarFactura607(
     avisos.push({ campo: 'fechaComprobante', mensaje: 'No se detectó la fecha del comprobante.' });
   }
 
-  const tipoIngreso = cliente.tipoIngresoDefault;
-  if (!tipoIngreso) {
+  // '01' (Ingresos por operaciones) es el tipo más común — mejor ese default
+  // que dejarlo vacío y bloquear la factura hasta que alguien lo asigne a mano.
+  const tipoIngreso = cliente.tipoIngresoDefault ?? '01';
+  if (!cliente.tipoIngresoDefault) {
     avisos.push({
       campo: 'tipoIngreso',
-      mensaje: 'El cliente no tiene un Tipo de Ingreso configurado por defecto; debe asignarse manualmente.',
+      mensaje:
+        'El cliente no tiene un Tipo de Ingreso configurado por defecto; se usó "01 - Ingresos por operaciones" — verifica que sea correcto.',
     });
   }
 
@@ -223,7 +226,7 @@ export function derivarFactura607(
     isc: dec(hechos.isc),
     otrosImpuestos: dec(hechos.otrosImpuestos),
     propinaLegal: dec(hechos.propinaLegal),
-    tipoIngreso: tipoIngreso ?? '',
+    tipoIngreso,
     ...distribucion,
   };
 

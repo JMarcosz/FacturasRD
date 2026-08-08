@@ -31,6 +31,13 @@ export class FacturasController {
   // así nunca colisionan con `facturas/:id` y no dependen del orden de
   // declaración de los métodos.
 
+  /**
+   * Sin consumidores en el frontend desde que se unificó en una sola
+   * confirmación (`clasificacionConfirmada`, ver `facturas/lote/confirmar`):
+   * `revisada` no bloqueaba la exportación y competía con esa como un segundo
+   * "está listo". Se deja el endpoint por compatibilidad — no se ha borrado
+   * la columna ni los datos existentes — pero no debe ganar nuevos usos.
+   */
   @Patch('facturas/lote/revisar')
   marcarRevisadaLote(@Body() dto: LoteRevisarDto, @CurrentUser() user: AuthUser) {
     return this.facturasService.marcarRevisadaLote(dto.ids, dto.revisada, user.userId);
@@ -68,6 +75,7 @@ export class FacturasController {
     return this.facturasService.clasificar(id, dto, user.userId);
   }
 
+  /** Sin consumidores — ver nota en `facturas/lote/revisar`. */
   @Patch('facturas/:id/revisar')
   marcarRevisada(@Param('id') id: string, @Body() dto: MarcarRevisadaDto, @CurrentUser() user: AuthUser) {
     return this.facturasService.marcarRevisada(id, dto.revisada, user.userId);

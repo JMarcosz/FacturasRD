@@ -67,3 +67,17 @@ export async function descargarExcelPorRango(
   });
   guardarBlob(response.data as Blob, response.headers as Record<string, unknown>, 'reporte.xlsx');
 }
+
+/**
+ * Volcado con TODO lo extraído del rango, sin pedir formato y SIN excluir las
+ * facturas sin clasificar — a diferencia de `descargarExcelPorRango`, que
+ * exige un 606/607 y las deja fuera a propósito. Sirve para auditar qué leyó
+ * la IA, no para declarar.
+ */
+export async function descargarExcelCompleto(clienteId: string | undefined, desde: string, hasta: string) {
+  const response = await http.get('/exportacion/excel-completo', {
+    params: { clienteId: clienteId || undefined, desde, hasta },
+    responseType: 'blob',
+  });
+  guardarBlob(response.data as Blob, response.headers as Record<string, unknown>, 'todo.xlsx');
+}

@@ -9,6 +9,7 @@ import AvatarIniciales from '../components/ui/AvatarIniciales.vue';
 import { aYyyymm, obtenerResumen } from '../api/estadisticas';
 import { diasParaDeclarar, fmtYyyymm, pct } from '../formato';
 import { useAuthStore } from '../stores/auth';
+import { useHiloConductor } from '../composables/useHiloConductor';
 import type { EstadoPeriodo, Formato, ResumenEstadisticas } from '../types';
 
 type Tono = 'ok' | 'alerta' | 'error' | 'info' | 'indigo' | 'neutro' | 'teal';
@@ -62,6 +63,10 @@ const resumen = ref<ResumenEstadisticas | null>(null);
 const cargando = ref(true);
 const error = ref('');
 
+// Mismo cálculo que la cinta persistente de AppLayout: el botón de la
+// cabecera del embudo lleva al mismo "siguiente paso", nunca a uno distinto.
+const { pasoActual } = useHiloConductor(resumen);
+
 // El mes se fija al montar: si el usuario deja la pantalla abierta pasada la
 // medianoche del día 1, los datos y el contador de días siguen coincidiendo.
 const yyyymmLocal = ref(aYyyymm(new Date()));
@@ -91,7 +96,7 @@ const textoDias = computed(() => {
 
 const vacio = computed(() => !cargando.value && !error.value && (resumen.value?.mes.escaneadas ?? 0) === 0);
 
-/** El embudo no está anidado (se puede revisar sin clasificar): el % se topa a 100. */
+/** El embudo no está estrictamente anidado (`confirmarClasificacionLote` no exige cliente): el % se topa a 100. */
 function avance(parte: number, total: number): number {
   return Math.min(100, pct(parte, total));
 }
@@ -104,7 +109,7 @@ const filas = computed<FilaPeriodo[]>(() => {
   for (const c of resumen.value.porCliente) {
     if (c.clienteId === null) continue; // grupo "sin clasificar": no es un período
     for (const f of c.porFormato) {
-      const tono = tonoFila(f.conErrorValidacion, f.periodo?.estado ?? null, avance(f.revisadas, f.escaneadas));
+      const tono = tonoFila(f.conErrorValidacion, f.periodo?.estado ?? null, avance(f.confirmadas, f.escaneadas));
       salida.push({
         clave: `${c.clienteId}:${f.formato ?? 'sin'}`,
         clienteId: c.clienteId,
@@ -113,8 +118,8 @@ const filas = computed<FilaPeriodo[]>(() => {
         formato: f.formato,
         formatoLabel: f.formato ? FORMATOS[f.formato] : 'Sin formato',
         facturas: f.escaneadas,
-        avance: avance(f.revisadas, f.escaneadas),
-        estadoTexto: textoFila(f.conErrorValidacion, f.periodo?.estado ?? null, avance(f.revisadas, f.escaneadas)),
+        avance: avance(f.confirmadas, f.escaneadas),
+        estadoTexto: textoFila(f.conErrorValidacion, f.periodo?.estado ?? null, avance(f.confirmadas, f.escaneadas)),
         tono,
         periodoId: f.periodo?.id ?? null,
       });
@@ -158,7 +163,7 @@ const etapas = computed<Etapa[]>(() => {
   if (!resumen.value) return [];
   const m = resumen.value.mes;
   const cola = resumen.value.colaDocumentos.pendientes + resumen.value.colaDocumentos.procesando;
-  const porConfirmar = Math.max(0, m.escaneadas - m.revisadas);
+  const porConfirmar = Math.max(0, m.clasificadas - m.confirmadas);
   return [
     {
       n: '1',
@@ -182,10 +187,10 @@ const etapas = computed<Etapa[]>(() => {
     },
     {
       n: '3',
-      titulo: 'Revisadas',
-      valor: String(m.revisadas),
+      titulo: 'Confirmadas',
+      valor: String(m.confirmadas),
       detalle: porConfirmar > 0 ? `${porConfirmar} pendientes de confirmar` : 'todo confirmado',
-      pct: avance(m.revisadas, m.escaneadas),
+      pct: avance(m.confirmadas, m.clasificadas),
       color: '#b54708',
       fondo: '#fffaeb',
       borde: '#fedf89',
@@ -278,7 +283,7 @@ const bloqueos = computed<Bloqueo[]>(() =>
 );
 
 function abrirFila(fila: FilaPeriodo) {
-  if (fila.periodoId) router.push({ name: 'revision', params: { periodoId: fila.periodoId } });
+  if (fila.clienteId) router.push({ name: 'facturas', query: { clienteId: fila.clienteId } });
 }
 
 function irA(ruta: string) {
@@ -337,6 +342,15 @@ onMounted(cargar);
         >
           <template #cabecera>
             <span class="chip-plazo" :class="{ 'chip-plazo--vencido': dias < 0 }">{{ textoDias }}</span>
+            <button
+              v-if="pasoActual"
+              type="button"
+              class="boton-siguiente-paso"
+              @click="$router.push(pasoActual.ruta)"
+            >
+              {{ pasoActual.pendiente ? `Ir a ${pasoActual.label.toLowerCase()}` : 'Descargar reportes' }}
+              <i class="pi pi-arrow-right" style="font-size: 10px"></i>
+            </button>
           </template>
 
           <div class="etapas">
@@ -365,6 +379,7 @@ onMounted(cargar);
               <button type="button" class="enlace" @click="irA('reporteria')">Ver todos</button>
             </template>
 
+            <div class="tabla-scroll">
             <table class="tabla">
               <thead>
                 <tr>
@@ -411,6 +426,7 @@ onMounted(cargar);
                 </tr>
               </tbody>
             </table>
+            </div>
           </TarjetaPanel>
 
           <div class="lateral">
@@ -477,6 +493,24 @@ onMounted(cargar);
   color: var(--error);
   background: var(--error-fondo);
   border-color: var(--error-borde);
+}
+.boton-siguiente-paso {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 13px;
+  background: var(--teal);
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.boton-siguiente-paso:hover {
+  background: var(--teal-oscuro);
 }
 
 .etapas {
@@ -810,5 +844,149 @@ onMounted(cargar);
 }
 .vacio__accion i {
   font-size: 12px;
+}
+
+@media (max-width: 1024px) {
+  .columnas {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .etapas {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .etapa {
+    padding: 12px;
+    gap: 7px;
+  }
+  .etapa__valor {
+    font-size: 20px;
+  }
+  .etapa__titulo {
+    font-size: 11.5px;
+  }
+  .etapa__detalle {
+    font-size: 10.5px;
+  }
+  .etapa__n {
+    width: 20px;
+    height: 20px;
+    font-size: 9px;
+  }
+  .columnas {
+    gap: 12px;
+  }
+  .bloqueo {
+    padding: 8px 10px;
+    gap: 8px;
+  }
+  .bloqueo__n {
+    width: 22px;
+    height: 22px;
+    font-size: 10px;
+    border-radius: 6px;
+  }
+  .bloqueo__titulo {
+    font-size: 11.5px;
+  }
+  .bloqueo__detalle {
+    font-size: 10px;
+  }
+  .accion__icono {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+  }
+  .accion__icono i {
+    font-size: 11px;
+  }
+  .accion__titulo {
+    font-size: 12px;
+  }
+  .accion__detalle {
+    font-size: 10.5px;
+  }
+}
+
+@media (max-width: 480px) {
+  .etapas,
+  .acciones {
+    grid-template-columns: 1fr;
+  }
+  .dashboard {
+    gap: 12px;
+  }
+  .etapa {
+    padding: 10px;
+  }
+  .etapa__valor {
+    font-size: 18px;
+  }
+  .etapa__n {
+    width: 18px;
+    height: 18px;
+    font-size: 8.5px;
+  }
+  .etapas {
+    gap: 8px;
+  }
+  .accion {
+    padding: 10px;
+  }
+  .accion__titulo {
+    font-size: 11.5px;
+  }
+  .accion__detalle {
+    font-size: 10px;
+  }
+  .accion__icono {
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+  }
+  .accion__icono i {
+    font-size: 10px;
+  }
+  .acciones {
+    gap: 8px;
+  }
+  .columnas {
+    gap: 10px;
+  }
+  .bloqueo {
+    padding: 7px 9px;
+    gap: 7px;
+  }
+  .bloqueo__n {
+    width: 20px;
+    height: 20px;
+    font-size: 9px;
+  }
+  .bloqueo__titulo {
+    font-size: 11px;
+  }
+  .vacio__icono {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    font-size: 16px;
+  }
+  .vacio__titulo {
+    font-size: 14px;
+  }
+  .vacio__texto {
+    font-size: 11.5px;
+  }
+  .vacio__accion {
+    font-size: 11.5px;
+    padding: 7px 12px;
+  }
+  .vacio__accion i {
+    font-size: 11px;
+  }
+  .enlace {
+    font-size: 10.5px;
+  }
 }
 </style>

@@ -11,7 +11,7 @@ import {
   dec,
   derivarFactura606,
   derivarFactura607,
-  detectarTipoIdentificacion,
+  identificacionDeclarada,
   limpiarIdentificacion,
   normalizarIdentificacion,
   validarFactura606,
@@ -217,17 +217,14 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
     const fechaComprobante = h.fechaEmision ? new Date(h.fechaEmision) : null;
     const montoFacturado = calcularMontoFacturado(h);
 
-    // No sembrar rncCedula antes de clasificar: para 607, declara el RNC del
-    // receptor (comprador), para 606, el del emisor (proveedor). Sembrar
-    // cualquiera de los dos sin saber el formato pone datos incorrectos en el
-    // campo que va a la DGII. La derivación lo rellena bien al clasificar.
-    const rncCedula = '';
-
     const factura = await this.prisma.factura.create({
       data: {
         documentoId,
-        rncCedula,
-        tipoIdentificacion: rncCedula ? detectarTipoIdentificacion(rncCedula) : '3',
+        // Sin clasificar todavía no hay lado declarante (para 607 declara el
+        // receptor, para 606 el emisor — no se sabe cuál hasta clasificar), así
+        // que no hay heurística de dígitos que aplicar. La derivación calcula
+        // el tipo correcto al clasificar.
+        tipoIdentificacion: '3',
         nombreEmisor: h.nombreEmisor,
         // Se guardan sin guiones ni puntos: el OCR los arrastra del papel y el
         // mismo RNC acababa almacenado de dos formas distintas.
@@ -326,9 +323,9 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
   private async ncfsYaDeclarados(clienteRnc: string, formato: Formato, excluirFacturaId: string): Promise<Set<string>> {
     const facturas = await this.prisma.factura.findMany({
       where: { formato, cliente: { rnc: clienteRnc }, id: { not: excluirFacturaId } },
-      select: { rncCedula: true, ncf: true },
+      select: { identificacionEmisor: true, identificacionReceptor: true, ncf: true },
     });
-    return new Set(facturas.map((f) => `${f.rncCedula}:${f.ncf}`));
+    return new Set(facturas.map((f) => `${identificacionDeclarada(formato, f)}:${f.ncf}`));
   }
 
   /**
@@ -379,7 +376,6 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
             formato: 'F607',
             clasificacionConfirmada: clasificacion.clasificacionConfirmada ?? false,
             periodoId,
-            rncCedula: factura.rncCedula,
             tipoIdentificacion: factura.tipoIdentificacion,
             ncf: factura.ncf,
             ncfModificado: factura.ncfModificado,
@@ -420,7 +416,6 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
             formato: 'F606',
             clasificacionConfirmada: clasificacion.clasificacionConfirmada ?? false,
             periodoId,
-            rncCedula: factura.rncCedula,
             tipoIdentificacion: factura.tipoIdentificacion,
             ncf: factura.ncf,
             ncfModificado: factura.ncfModificado,

@@ -14,7 +14,7 @@ describe('parsearNcf', () => {
     expect(r.formatoValido).toBe(true);
     expect(r.esECF).toBe(true);
     expect(r.tipo).toBe('31');
-    expect(r.tipoValido).toBe(false); // "31" no está en el catálogo de tipos
+    expect(r.tipoValido).toBe(true);
   });
 
   it('marca tipo no reconocido cuando el código de 2 dígitos no está en el catálogo', () => {

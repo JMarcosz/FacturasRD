@@ -26,10 +26,6 @@ export function actualizarFactura(id: string, cambios: Record<string, unknown>) 
   return http.patch<Factura>(`/facturas/${id}`, cambios).then((r) => r.data);
 }
 
-export function marcarRevisada(id: string, revisada: boolean) {
-  return http.patch<Factura>(`/facturas/${id}/revisar`, { revisada }).then((r) => r.data);
-}
-
 export function clasificarFactura(id: string, clienteId: string, formato: 'F606' | 'F607') {
   return http.patch<Factura>(`/facturas/${id}/clasificar`, { clienteId, formato }).then((r) => r.data);
 }
@@ -65,10 +61,6 @@ export interface CamposLote {
    * FORMA_VENTA_INDEFINIDA y el TXT no sale.
    */
   formaVenta?: FormaVenta607;
-}
-
-export function revisarLote(ids: string[], revisada: boolean) {
-  return http.patch<ResultadoLote>('/facturas/lote/revisar', { ids, revisada }).then((r) => r.data);
 }
 
 export function editarLote(

@@ -1,7 +1,6 @@
 import { IsBoolean, IsISO8601, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class UpdateFacturaDto {
-  @IsOptional() @IsString() rncCedula?: string;
   @IsOptional() @IsString() tipoIdentificacion?: string;
 
   @IsOptional() @IsString() nombreEmisor?: string | null;

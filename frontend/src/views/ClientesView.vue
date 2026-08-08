@@ -15,11 +15,19 @@ import TarjetaPanel from '../components/ui/TarjetaPanel.vue';
 import Pastilla from '../components/ui/Pastilla.vue';
 import AvatarIniciales from '../components/ui/AvatarIniciales.vue';
 import ImportarClientesDialog from '../components/ImportarClientesDialog.vue';
-import { confirmarCliente, crearCliente, descartarCliente, listarClientes, reclasificarFacturas } from '../api/clientes';
+import {
+  confirmarCliente,
+  crearCliente,
+  descartarCliente,
+  detectarDuplicados,
+  fusionarClientes,
+  listarClientes,
+  reclasificarFacturas,
+} from '../api/clientes';
 import { aYyyymm, obtenerResumen } from '../api/estadisticas';
 import { fmtMontoCorto, fmtYyyymm } from '../formato';
 import { useCatalogosStore } from '../stores/catalogos';
-import type { Cliente, RollupCliente } from '../types';
+import type { Cliente, GrupoDuplicado, RollupCliente } from '../types';
 
 type Tono = 'ok' | 'alerta' | 'error' | 'info' | 'indigo' | 'neutro' | 'teal';
 
@@ -41,6 +49,7 @@ const catalogos = useCatalogosStore();
 
 const clientes = ref<Cliente[]>([]);
 const rollups = ref<RollupCliente[]>([]);
+const duplicados = ref<GrupoDuplicado[]>([]);
 const cargando = ref(true);
 const errorCarga = ref('');
 
@@ -229,6 +238,35 @@ async function cargar() {
   } catch {
     rollups.value = [];
   }
+  // Igual de accesorio: sin esto la pantalla sigue siendo útil.
+  try {
+    duplicados.value = await detectarDuplicados();
+  } catch {
+    duplicados.value = [];
+  }
+}
+
+/**
+ * Fusiona un grupo de RNC casi idénticos (típicamente un dígito mal leído por
+ * el OCR) en el primero: las facturas y períodos de los demás se reasignan a
+ * ese, y quedan desactivados. Antes vivía en la pantalla de Triaje, junto a
+ * confirmar/reclasificar — que también son sobre clientes — en vez de aquí.
+ */
+async function fusionar(grupo: GrupoDuplicado) {
+  if (grupo.ids.length < 2) return;
+  const [idPrincipal, ...idsSecundarios] = grupo.ids;
+  try {
+    await fusionarClientes(idPrincipal, idsSecundarios);
+    toast.add({ severity: 'success', summary: 'Clientes fusionados', life: 3000 });
+    await cargar();
+  } catch (e: any) {
+    toast.add({
+      severity: 'error',
+      summary: 'Error al fusionar',
+      detail: e?.response?.data?.message ?? 'Intenta de nuevo.',
+      life: 5000,
+    });
+  }
 }
 
 onMounted(() => {
@@ -253,6 +291,29 @@ onMounted(() => {
         </template>
       </EncabezadoPantalla>
 
+      <!-- RNC casi duplicados: se resuelven antes que las auto-detecciones para
+           no confirmar por separado dos contribuyentes que son el mismo. -->
+      <TarjetaPanel
+        v-if="duplicados.length > 0"
+        :titulo="`Contribuyentes con RNC casi duplicados (${duplicados.length})`"
+        subtitulo="Un dígito mal leído por el OCR suele crear dos registros del mismo contribuyente. Fusiónalos."
+      >
+        <div class="grupos">
+          <div v-for="dup in duplicados" :key="dup.nombre" class="grupo">
+            <div class="grupo__cabecera">
+              <AvatarIniciales :nombre="dup.nombre" />
+              <div class="grupo__info">
+                <span class="grupo__nombre">{{ dup.nombre }}</span>
+                <span class="grupo__rnc">RNCs: {{ dup.rncs.join(', ') }}</span>
+              </div>
+            </div>
+            <div class="grupo__acciones">
+              <Button label="Fusionar contribuyentes" icon="pi pi-link" size="small" @click="fusionar(dup)" />
+            </div>
+          </div>
+        </div>
+      </TarjetaPanel>
+
       <!-- Clientes auto-detectados -->
       <TarjetaPanel
         v-if="clientesAutoDetectados.length > 0"
@@ -272,10 +333,11 @@ onMounted(() => {
               </div>
             </div>
             <div v-if="confirmando === c.id" class="detectado__confirmar">
-              <label class="detectado__campo">
+              <label class="detectado__campo" :for="`detectado-ingreso-${c.id}`">
                 <span>Tipo de ingreso</span>
                 <Select
                   v-model="tipoIngresoConfirmar"
+                  :input-id="`detectado-ingreso-${c.id}`"
                   :options="catalogos.catalogos.tiposIngreso607.map((t) => ({ label: `${t.codigo} · ${t.descripcion}`, value: t.codigo }))"
                   option-label="label"
                   option-value="value"
@@ -693,5 +755,84 @@ onMounted(() => {
 .detectado__botones {
   display: flex;
   gap: 6px;
+}
+
+/* `.rejilla` no necesita ajuste: su `auto-fill` con `minmax(300px, 1fr)` ya
+   baja sola a una columna. */
+@media (max-width: 640px) {
+  .form {
+    grid-template-columns: 1fr;
+  }
+  .detectado__select {
+    width: 100%;
+  }
+  .detectado__botones {
+    width: 100%;
+  }
+  .detectado__botones :deep(.p-button) {
+    flex: 1;
+  }
+}
+
+/* ── RNC casi duplicados (traído de la antigua pantalla de Triaje) ── */
+.grupos {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.grupo {
+  border: 1px solid var(--borde-tenue);
+  border-radius: 11px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.grupo__cabecera {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.grupo__info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.grupo__nombre {
+  font-weight: 700;
+  font-size: 13.5px;
+  color: var(--texto);
+}
+.grupo__rnc {
+  font-size: 12px;
+  color: var(--texto-suave);
+}
+.grupo__acciones {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-left: 42px;
+}
+
+@media (max-width: 768px) {
+  .grupo__cabecera {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .grupo__acciones {
+    flex-direction: column;
+    align-items: stretch;
+    padding-left: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .detectado { padding: 9px 10px; gap: 10px; }
+  .detectado__nombre { font-size: 12px; }
+  .detectado__rnc { font-size: 11px; }
+  .vacio__icono { width: 36px; height: 36px; border-radius: 10px; font-size: 16px; }
+  .vacio__titulo { font-size: 14px; }
+  .vacio__texto { font-size: 11.5px; }
 }
 </style>

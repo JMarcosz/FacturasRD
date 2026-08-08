@@ -10,6 +10,7 @@ import {
   FacturaDgii607,
   describirTipoNcf,
   distribuirFormaVenta607,
+  identificacionDeclarada,
   limpiarIdentificacion,
   traducirCampo,
   traducirCampos,
@@ -93,6 +94,11 @@ function strOrNull(valor: string | null | undefined, fallback: string | null): s
   return valor === undefined ? fallback : valor;
 }
 
+/** Como `str`, pero para campos nullable en Prisma que la DTO también puede poner en null explícitamente. */
+function strDeNullable(valor: string | null | undefined, fallback: string | null): string {
+  return (valor === undefined ? fallback : valor) ?? '';
+}
+
 function fecha(valor: string | null | undefined, fallback: Date | null): Date | null {
   if (valor === undefined) return fallback;
   return valor === null ? null : new Date(valor);
@@ -166,14 +172,14 @@ export class FacturasService {
   private async clavesNcfDeclaradas(clienteRnc: string, formato: 'F606' | 'F607'): Promise<ClaveNcf[]> {
     const facturas = await this.prisma.factura.findMany({
       where: { periodo: { formato, cliente: { rnc: clienteRnc } } },
-      select: { id: true, rncCedula: true, ncf: true },
+      select: { id: true, identificacionEmisor: true, identificacionReceptor: true, ncf: true },
     });
-    return facturas.map((f) => ({ id: f.id, clave: `${f.rncCedula}:${f.ncf}` }));
+    return facturas.map((f) => ({ id: f.id, clave: `${identificacionDeclarada(formato, f)}:${f.ncf}` }));
   }
 
   private construirDatos607(antes: Factura, dto: UpdateFacturaDto): Omit<FacturaDgii607, 'fechaComprobante'> & { fechaComprobante: Date | null } {
     return {
-      rncCedula: str(dto.rncCedula, antes.rncCedula),
+      rncCedula: strDeNullable(dto.identificacionReceptor, antes.identificacionReceptor),
       tipoIdentificacion: str(dto.tipoIdentificacion, antes.tipoIdentificacion) as FacturaDgii607['tipoIdentificacion'],
       ncf: str(dto.ncf, antes.ncf),
       ncfModificado: strOrNull(dto.ncfModificado, antes.ncfModificado),
@@ -201,7 +207,7 @@ export class FacturasService {
 
   private construirDatos606(antes: Factura, dto: UpdateFacturaDto): Omit<FacturaDgii606, 'fechaComprobante'> & { fechaComprobante: Date | null } {
     return {
-      rncCedula: str(dto.rncCedula, antes.rncCedula),
+      rncCedula: strDeNullable(dto.identificacionEmisor, antes.identificacionEmisor),
       tipoIdentificacion: str(dto.tipoIdentificacion, antes.tipoIdentificacion) as FacturaDgii606['tipoIdentificacion'],
       ncf: str(dto.ncf, antes.ncf),
       ncfModificado: strOrNull(dto.ncfModificado, antes.ncfModificado),
@@ -232,7 +238,6 @@ export class FacturasService {
     // Las identificaciones se guardan sin separadores vengan de donde vengan:
     // si al corregirlas a mano se colaran guiones, el RNC dejaría de casar con
     // el del contribuyente y la factura se «desclasificaría» sola.
-    if (dto.rncCedula !== undefined) data.rncCedula = limpiarIdentificacion(dto.rncCedula);
     if (dto.tipoIdentificacion !== undefined) data.tipoIdentificacion = dto.tipoIdentificacion;
     if (dto.nombreEmisor !== undefined) data.nombreEmisor = dto.nombreEmisor;
     if (dto.identificacionEmisor !== undefined) {
@@ -492,7 +497,7 @@ export class FacturasService {
   /**
    * Edición en lote, limitada a los campos de clasificación. Esa limitación es
    * de diseño, no una optimización pendiente: ninguno de esos campos entra en
-   * la clave `rncCedula:ncf`, así que las claves ya declaradas se calculan una
+   * la clave identificación declarada + NCF, así que las claves ya declaradas se calculan una
    * sola vez por cliente+formato (`cacheClaves`) en lugar de una por fila, que
    * es la trampa O(N²) de `update()`. NCF y montos siguen siendo edición de a
    * una.

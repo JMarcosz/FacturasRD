@@ -6,6 +6,7 @@ import DatePicker from 'primevue/datepicker';
 import Drawer from 'primevue/drawer';
 import InputNumber from 'primevue/inputnumber';
 import InputText from 'primevue/inputtext';
+import Menu from 'primevue/menu';
 import Select from 'primevue/select';
 import Tabs from 'primevue/tabs';
 import TabList from 'primevue/tablist';
@@ -22,8 +23,8 @@ import TarjetaPanel from '../components/ui/TarjetaPanel.vue';
 import {
   actualizarFactura,
   clasificarFactura,
+  confirmarClasificacionLote,
   eliminarFactura,
-  marcarRevisada as apiMarcarRevisada,
   obtenerFactura,
 } from '../api/facturas';
 import { listarClientes } from '../api/clientes';
@@ -44,10 +45,36 @@ const cargando = ref(true);
 const guardando = ref(false);
 const verOcr = ref(false);
 const visorRef = ref<InstanceType<typeof VisorDocumento> | null>(null);
+const menuHerramientas = ref<InstanceType<typeof Menu> | null>(null);
+const itemsHerramientas = [
+  { label: 'Rotar', icon: 'pi pi-refresh', command: () => visorRef.value?.rotar() },
+  { label: 'Abrir en otra pestaña', icon: 'pi pi-external-link', command: () => visorRef.value?.abrirAparte() },
+];
 
 // El formato lo trae la propia factura una vez clasificada; mientras no lo
 // esté, se muestra el bloque de clasificación en vez de los campos de 606/607.
 const formato = computed<Formato | null>(() => factura.value?.formato ?? null);
+
+/**
+ * Qué lado de `form` es "lo declarado" para el formato actual — 606 (compra)
+ * declara al emisor (el proveedor), 607 (venta) declara al receptor (el
+ * comprador). `null` antes de clasificar: todavía no hay lado que decidir.
+ * No es un campo propio (la factura ya no guarda `rncCedula`): son
+ * identificacionEmisor/identificacionReceptor vistos desde el ángulo que a
+ * la DGII le importa, no un tercer dato guardado aparte.
+ */
+const campoIdentificacionDeclarada = computed<'identificacionEmisor' | 'identificacionReceptor' | null>(() => {
+  if (formato.value === 'F607') return 'identificacionReceptor';
+  if (formato.value === 'F606') return 'identificacionEmisor';
+  return null;
+});
+
+const identificacionDeclarada = computed<string>({
+  get: () => (campoIdentificacionDeclarada.value ? form[campoIdentificacionDeclarada.value] : ''),
+  set: (valor) => {
+    if (campoIdentificacionDeclarada.value) form[campoIdentificacionDeclarada.value] = valor;
+  },
+});
 
 const FORMATOS: Array<{ label: string; value: Formato }> = [
   { label: '607 · Venta', value: 'F607' },
@@ -58,7 +85,6 @@ const clasificacion = reactive({ clienteId: '', formato: 'F607' as Formato });
 const clasificando = ref(false);
 
 const form = reactive({
-  rncCedula: '',
   tipoIdentificacion: '1',
   nombreEmisor: '',
   identificacionEmisor: '',
@@ -96,7 +122,6 @@ function aFecha(iso: string | null): Date | null {
 }
 
 function cargarDesdeFactura(f: Factura) {
-  form.rncCedula = f.rncCedula;
   form.tipoIdentificacion = f.tipoIdentificacion;
   form.nombreEmisor = f.nombreEmisor ?? '';
   form.identificacionEmisor = f.identificacionEmisor ?? '';
@@ -256,12 +281,15 @@ function tipoIdentificacionPorLongitud(valor: string): string {
   return '3';
 }
 
-/** Copia un RNC de cualquiera de los dos lados al campo que se declara ante la DGII. */
-function usarIdentificacion(valor: string) {
-  if (!valor) return;
-  form.rncCedula = valor.replace(/[^\d-]/g, '');
+/**
+ * Sin el selector de "Tipo de identificación" en la UI (se quitó: RNC,
+ * Cédula y Pasaporte se distinguen solo por la cantidad de dígitos, y tener
+ * un selector aparte para eso era un campo más a llenar por algo que ya se
+ * puede inferir), el tipo se deriva solo de lo que se escribe aquí.
+ */
+watch(identificacionDeclarada, (valor) => {
   form.tipoIdentificacion = tipoIdentificacionPorLongitud(valor);
-}
+});
 
 function aIso(fecha: Date | null): string | null {
   return fecha ? fecha.toISOString().slice(0, 10) : null;
@@ -272,7 +300,6 @@ async function guardar(): Promise<Factura | null> {
   guardando.value = true;
   try {
     const payload: Record<string, unknown> = {
-      rncCedula: form.rncCedula,
       tipoIdentificacion: form.tipoIdentificacion,
       nombreEmisor: form.nombreEmisor || null,
       identificacionEmisor: form.identificacionEmisor || null,
@@ -328,11 +355,34 @@ async function guardar(): Promise<Factura | null> {
   }
 }
 
-async function guardarYMarcarRevisada() {
+/**
+ * Único acto de confirmar: sin cliente asignado no hay clasificación que
+ * confirmar, así que solo se guarda. `clasificacionConfirmada` es el único
+ * estado que gatea el TXT — `revisada` quedó retirado de la interfaz.
+ *
+ * Todas las ramas terminan en un toast: guardar() ya avisa si falla, pero su
+ * éxito era silencioso — sin cliente asignado (el caso normal de solo
+ * "Guardar") no pasaba nada visible en pantalla.
+ */
+async function guardarYConfirmar() {
   const guardada = await guardar();
   if (!guardada) return;
-  factura.value = await apiMarcarRevisada(guardada.id, true);
-  toast.add({ severity: 'success', summary: 'Factura revisada', life: 2500 });
+  if (!guardada.clienteId) {
+    toast.add({ severity: 'success', summary: 'Factura guardada', life: 2500 });
+    return;
+  }
+  const r = await confirmarClasificacionLote([guardada.id]);
+  if (r.procesadas > 0) {
+    factura.value = { ...guardada, clasificacionConfirmada: true };
+    toast.add({ severity: 'success', summary: 'Factura confirmada', life: 2500 });
+  } else {
+    toast.add({
+      severity: 'warn',
+      summary: 'Guardada, pero no se pudo confirmar',
+      detail: r.fallidas[0]?.motivo,
+      life: 5000,
+    });
+  }
 }
 
 async function clasificar() {
@@ -354,6 +404,15 @@ async function clasificar() {
   }
 }
 
+/**
+ * Volver por historial (no un push fijo a /facturas) para no pisar el filtro,
+ * mes y búsqueda que la vista de Facturas guarda en su propia URL.
+ */
+function volver() {
+  if (window.history.state?.back) router.back();
+  else router.push({ name: 'facturas' });
+}
+
 function descartar() {
   confirm.require({
     message: 'Se eliminará la factura y, si era la única del documento, también el archivo subido.',
@@ -367,7 +426,7 @@ function descartar() {
       try {
         await eliminarFactura(factura.value.id);
         toast.add({ severity: 'success', summary: 'Factura descartada', life: 2500 });
-        router.push({ name: 'facturas' });
+        volver();
       } catch (e: any) {
         toast.add({
           severity: 'error',
@@ -385,8 +444,20 @@ function onTeclado(ev: KeyboardEvent) {
   const enCampo = destino?.tagName === 'INPUT' || destino?.tagName === 'SELECT';
   if (ev.key === 'Enter' && enCampo) {
     ev.preventDefault();
-    guardarYMarcarRevisada();
+    guardarYConfirmar();
   }
+}
+
+/**
+ * Por debajo de 1200px `.cuerpo` deja de ser dos columnas y apila el
+ * documento sobre el formulario (ver el `@media` de más abajo) — ahí ya no
+ * hay una altura de viewport que repartir, así que el visor vuelve a su modo
+ * de alto fijo por aspect-ratio en vez de `llenar`. Sin este seguimiento,
+ * `llenar` (que exige una altura definida en el padre) colapsaría a 0.
+ */
+const anchoAngosto = ref(window.innerWidth <= 1200);
+function onResize() {
+  anchoAngosto.value = window.innerWidth <= 1200;
 }
 
 watch(() => props.facturaId, cargar);
@@ -395,12 +466,16 @@ onMounted(async () => {
   await Promise.all([cargar(), catalogos.cargar()]);
   clientes.value = await listarClientes();
   window.addEventListener('keydown', onTeclado);
+  window.addEventListener('resize', onResize);
 });
-onUnmounted(() => window.removeEventListener('keydown', onTeclado));
+onUnmounted(() => {
+  window.removeEventListener('keydown', onTeclado);
+  window.removeEventListener('resize', onResize);
+});
 </script>
 
 <template>
-  <AppLayout v-slot="{ refrescarResumen }">
+  <AppLayout pantalla-completa v-slot="{ refrescarResumen }">
     <p v-if="cargando" class="estado">Cargando…</p>
     <p v-else-if="!factura" class="estado">Factura no encontrada.</p>
 
@@ -408,7 +483,7 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
       <!-- ── Cabecera ── -->
       <div class="cabecera">
         <div class="cabecera__izq">
-          <button type="button" class="volver" @click="$router.push({ name: 'facturas' })">
+          <button type="button" class="volver" @click="volver">
             <i class="pi pi-arrow-left" style="font-size: 10px"></i>Volver a facturas
           </button>
           <div class="cabecera__titulo">
@@ -423,17 +498,17 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
               :texto="factura.origen === 'IA' ? 'Extraída por IA' : factura.origen === 'EDITADA' ? 'Editada a mano' : 'Manual'"
               tono="indigo"
             />
-            <Pastilla v-if="factura.revisada" texto="Revisada" tono="ok" icono="pi-check" />
+            <Pastilla v-if="factura.clasificacionConfirmada" texto="Confirmada" tono="ok" icono="pi-check" />
           </div>
           <span class="cabecera__sub">{{ subtitulo }}</span>
         </div>
         <div class="cabecera__acciones">
           <Button label="Descartar" outlined severity="secondary" size="small" @click="descartar" />
           <Button
-            label="Guardar y marcar revisada"
+            :label="factura.clienteId ? 'Guardar y confirmar' : 'Guardar'"
             size="small"
             :loading="guardando"
-            @click="guardarYMarcarRevisada().then(refrescarResumen)"
+            @click="guardarYConfirmar().then(refrescarResumen)"
           />
         </div>
       </div>
@@ -444,18 +519,34 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
           <div class="panel__cabecera">
             <span class="panel__titulo">Documento original</span>
             <div class="herramientas">
-              <button type="button" class="herramienta" title="Alejar" @click="visorRef?.alejar()">
+              <button type="button" class="herramienta" title="Alejar" aria-label="Alejar" @click="visorRef?.alejar()">
                 <i class="pi pi-search-minus"></i>
               </button>
-              <button type="button" class="herramienta" title="Acercar" @click="visorRef?.acercar()">
+              <button type="button" class="herramienta" title="Acercar" aria-label="Acercar" @click="visorRef?.acercar()">
                 <i class="pi pi-search-plus"></i>
               </button>
-              <button type="button" class="herramienta" title="Rotar" @click="visorRef?.rotar()">
+              <button type="button" class="herramienta herramienta-desktop" title="Rotar" aria-label="Rotar" @click="visorRef?.rotar()">
                 <i class="pi pi-refresh"></i>
               </button>
-              <button type="button" class="herramienta" title="Abrir en otra pestaña" @click="visorRef?.abrirAparte()">
+              <button
+                type="button"
+                class="herramienta herramienta-desktop"
+                title="Abrir en otra pestaña"
+                aria-label="Abrir en otra pestaña"
+                @click="visorRef?.abrirAparte()"
+              >
                 <i class="pi pi-external-link"></i>
               </button>
+              <button
+                type="button"
+                class="herramienta herramienta-movil"
+                title="Más opciones"
+                aria-label="Más opciones del documento"
+                @click="menuHerramientas?.toggle($event)"
+              >
+                <i class="pi pi-ellipsis-v"></i>
+              </button>
+              <Menu ref="menuHerramientas" :model="itemsHerramientas" :popup="true" />
             </div>
           </div>
           <VisorDocumento
@@ -463,6 +554,8 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
             ref="visorRef"
             :documento-id="factura.documento.id"
             :mime-type="factura.documento.mimeType"
+            :llenar="!anchoAngosto"
+            alto-maximo="min(72vh, 720px)"
           />
           <div class="panel__pie">
             <span>{{ factura.documento?.filename ?? '—' }} · {{ paginacion }}</span>
@@ -517,19 +610,37 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
                       <span>Aviso: El RNC del cliente asignado ({{ factura?.cliente?.rnc }}) no coincide con el emisor ni con el receptor del documento.</span>
                     </div>
 
-                    <!-- Los RNC de emisor y receptor viven en sus campos editables de
-                         abajo. Repetirlos aquí como badges de solo lectura mostraba el
-                         mismo dato dos veces y hacía dudar de cuál era el que cuenta. -->
-                    <div class="campo">
+                    <!-- Emisor y receptor son solo el nombre: el RNC/Cédula que cuenta
+                         es uno solo ("declarado", abajo) — tener otro por cada lado
+                         era el mismo dato tres veces, con un botón "Usar" solo para
+                         copiar uno sobre el otro. -->
+                    <div class="campo campo--ancho">
                       <div class="campo__cabecera">
-                        <label>RNC / Cédula declarado</label>
-                        <Pastilla :texto="textoConfianza('rncCedula')" :tono="tonoConfianza('rncCedula')" tamano="sm" />
+                        <label for="f-nombreEmisor">Emisor (comercio)</label>
+                        <Pastilla :texto="textoConfianza('nombreEmisor')" :tono="tonoConfianza('nombreEmisor')" tamano="sm" />
                       </div>
-                      <InputText v-model="form.rncCedula" :invalid="!!erroresPorCampo.rncCedula" fluid />
-                      <span v-if="erroresPorCampo.rncCedula" class="nota nota--error">
-                        {{ erroresPorCampo.rncCedula[0] }}
+                      <InputText id="f-nombreEmisor" v-model="form.nombreEmisor" placeholder="Nombre del comercio" fluid />
+                    </div>
+
+                    <div v-if="campoIdentificacionDeclarada" class="campo campo--ancho">
+                      <div class="campo__cabecera">
+                        <label for="f-identificacionDeclarada">RNC / Cédula declarado</label>
+                        <Pastilla
+                          :texto="textoConfianza(campoIdentificacionDeclarada)"
+                          :tono="tonoConfianza(campoIdentificacionDeclarada)"
+                          tamano="sm"
+                        />
+                      </div>
+                      <InputText
+                        id="f-identificacionDeclarada"
+                        v-model="identificacionDeclarada"
+                        :invalid="!!erroresPorCampo[campoIdentificacionDeclarada]"
+                        fluid
+                      />
+                      <span v-if="erroresPorCampo[campoIdentificacionDeclarada]" class="nota nota--error">
+                        {{ erroresPorCampo[campoIdentificacionDeclarada][0] }}
                       </span>
-                      <span v-else-if="formato" class="nota">
+                      <span v-else class="nota">
                         {{
                           formato === 'F607'
                             ? 'En un 607 esta columna es del comprador.'
@@ -538,62 +649,20 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
                       </span>
                     </div>
 
-                    <div class="campo">
-                      <div class="campo__cabecera"><label>Tipo de identificación</label></div>
-                      <Select
-                        v-model="form.tipoIdentificacion"
-                        :options="catalogos.catalogos.tiposIdentificacion"
-                        option-label="descripcion"
-                        option-value="codigo"
-                        fluid
-                      />
-                    </div>
-
-                    <!-- Ambos lados se prellenan con lo que detectó la IA (que puede
-                         equivocarse) pero son editables y se guardan, aunque solo uno
-                         vaya a la columna que exporta la DGII. -->
-                    <div class="campo">
+                    <div class="campo campo--ancho">
                       <div class="campo__cabecera">
-                        <label>Emisor (comercio)</label>
-                        <Pastilla :texto="textoConfianza('nombreEmisor')" :tono="tonoConfianza('nombreEmisor')" tamano="sm" />
-                      </div>
-                      <InputText v-model="form.nombreEmisor" placeholder="Nombre del comercio" fluid />
-                      <div class="campo__fila">
-                        <InputText v-model="form.identificacionEmisor" placeholder="RNC / Cédula" fluid />
-                        <Button
-                          label="Usar →"
-                          text
-                          size="small"
-                          :disabled="!form.identificacionEmisor"
-                          @click="usarIdentificacion(form.identificacionEmisor)"
-                        />
-                      </div>
-                    </div>
-
-                    <div class="campo">
-                      <div class="campo__cabecera">
-                        <label>Receptor (cliente)</label>
+                        <label for="f-nombreReceptor">Receptor (cliente)</label>
                         <Pastilla :texto="textoConfianza('nombreReceptor')" :tono="tonoConfianza('nombreReceptor')" tamano="sm" />
                       </div>
-                      <InputText v-model="form.nombreReceptor" placeholder="Nombre del cliente" fluid />
-                      <div class="campo__fila">
-                        <InputText v-model="form.identificacionReceptor" placeholder="RNC / Cédula" fluid />
-                        <Button
-                          label="Usar →"
-                          text
-                          size="small"
-                          :disabled="!form.identificacionReceptor"
-                          @click="usarIdentificacion(form.identificacionReceptor)"
-                        />
-                      </div>
+                      <InputText id="f-nombreReceptor" v-model="form.nombreReceptor" placeholder="Nombre del cliente" fluid />
                     </div>
 
                     <div class="campo" :class="{ 'campo--dudoso': dudoso('ncf') }">
                       <div class="campo__cabecera">
-                        <label>NCF</label>
+                        <label for="f-ncf">NCF</label>
                         <Pastilla :texto="textoConfianza('ncf')" :tono="tonoConfianza('ncf')" tamano="sm" />
                       </div>
-                      <InputText v-model="form.ncf" :invalid="!!erroresPorCampo.ncf" fluid />
+                      <InputText id="f-ncf" v-model="form.ncf" :invalid="!!erroresPorCampo.ncf" fluid />
                       <span v-if="erroresPorCampo.ncf" class="nota nota--error">{{ erroresPorCampo.ncf[0] }}</span>
                       <span v-else-if="dudoso('ncf')" class="nota nota--alerta">
                         Confianza baja — confirma contra el comprobante
@@ -601,14 +670,14 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
                     </div>
 
                     <div class="campo">
-                      <div class="campo__cabecera"><label>Tipo de NCF</label></div>
-                      <InputText :model-value="factura.tipoNcf?.descripcion ?? '—'" readonly fluid />
+                      <div class="campo__cabecera"><label for="f-tipoNcf">Tipo de NCF</label></div>
+                      <InputText id="f-tipoNcf" :model-value="factura.tipoNcf?.descripcion ?? '—'" readonly fluid />
                       <span class="nota">Se deduce del propio NCF.</span>
                     </div>
 
                     <div class="campo">
-                      <div class="campo__cabecera"><label>NCF modificado</label></div>
-                      <InputText v-model="form.ncfModificado" :invalid="!!erroresPorCampo.ncfModificado" fluid />
+                      <div class="campo__cabecera"><label for="f-ncfModificado">NCF modificado</label></div>
+                      <InputText id="f-ncfModificado" v-model="form.ncfModificado" :invalid="!!erroresPorCampo.ncfModificado" fluid />
                       <span v-if="erroresPorCampo.ncfModificado" class="nota nota--error">
                         {{ erroresPorCampo.ncfModificado[0] }}
                       </span>
@@ -616,7 +685,7 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
 
                     <div class="campo" :class="{ 'campo--dudoso': dudoso('fechaComprobante') }">
                       <div class="campo__cabecera">
-                        <label>Fecha del comprobante</label>
+                        <label for="f-fechaComprobante">Fecha del comprobante</label>
                         <Pastilla
                           :texto="textoConfianza('fechaComprobante')"
                           :tono="tonoConfianza('fechaComprobante')"
@@ -625,6 +694,7 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
                       </div>
                       <DatePicker
                         v-model="form.fechaComprobante"
+                        input-id="f-fechaComprobante"
                         date-format="dd/mm/yy"
                         show-icon
                         icon-display="input"
@@ -641,10 +711,11 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
 
                     <div class="campo">
                       <div class="campo__cabecera">
-                        <label>{{ formato === 'F606' ? 'Fecha de pago' : 'Fecha de retención' }}</label>
+                        <label for="f-fechaRetencionOPago">{{ formato === 'F606' ? 'Fecha de pago' : 'Fecha de retención' }}</label>
                       </div>
                       <DatePicker
                         v-model="form.fechaRetencionOPago"
+                        input-id="f-fechaRetencionOPago"
                         date-format="dd/mm/yy"
                         show-icon
                         icon-display="input"
@@ -653,9 +724,10 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
                     </div>
 
                     <div v-if="formato === 'F607'" class="campo campo--ancho">
-                      <div class="campo__cabecera"><label>Tipo de ingreso</label></div>
+                      <div class="campo__cabecera"><label for="f-tipoIngreso">Tipo de ingreso</label></div>
                       <Select
                         v-model="form.tipoIngreso"
+                        input-id="f-tipoIngreso"
                         :options="catalogos.catalogos.tiposIngreso607"
                         option-label="descripcion"
                         option-value="codigo"
@@ -672,7 +744,7 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
                     <template v-else-if="formato === 'F606'">
                       <div class="campo campo--ancho" :class="{ 'campo--dudoso': dudoso('tipoBienesServicios') }">
                         <div class="campo__cabecera">
-                          <label>Tipo de bienes y servicios (606)</label>
+                          <label for="f-tipoBienesServicios">Tipo de bienes y servicios (606)</label>
                           <Pastilla
                             :texto="textoConfianza('tipoBienesServicios')"
                             :tono="tonoConfianza('tipoBienesServicios')"
@@ -681,6 +753,7 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
                         </div>
                         <Select
                           v-model="form.tipoBienesServicios"
+                          input-id="f-tipoBienesServicios"
                           :options="catalogos.catalogos.tiposBienesServicios606"
                           option-label="descripcion"
                           option-value="codigo"
@@ -696,11 +769,12 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
 
                       <div class="campo campo--ancho" :class="{ 'campo--dudoso': dudoso('formaPago') }">
                         <div class="campo__cabecera">
-                          <label>Forma de pago</label>
+                          <label for="f-formaPago">Forma de pago</label>
                           <Pastilla :texto="textoConfianza('formaPago')" :tono="tonoConfianza('formaPago')" tamano="sm" />
                         </div>
                         <Select
                           v-model="form.formaPago"
+                          input-id="f-formaPago"
                           :options="catalogos.catalogos.formasPago606"
                           option-label="descripcion"
                           option-value="codigo"
@@ -720,10 +794,10 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
 
                     <div v-if="factura.cliente" class="campo campo--ancho">
                       <div class="campo__cabecera">
-                        <label>Cliente al que se imputa</label>
+                        <label for="f-clienteImputado">Cliente al que se imputa</label>
                         <Pastilla texto="Manual" tono="indigo" tamano="sm" />
                       </div>
-                      <InputText :model-value="factura.cliente.nombre" readonly fluid />
+                      <InputText id="f-clienteImputado" :model-value="factura.cliente.nombre" readonly fluid />
                     </div>
                   </div>
                 </TabPanel>
@@ -733,17 +807,18 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
                   <div class="campos">
                     <div class="campo" :class="{ 'campo--dudoso': dudoso('montoFacturado') }">
                       <div class="campo__cabecera">
-                        <label>Monto facturado</label>
+                        <label for="f-montoFacturado">Monto facturado</label>
                         <Pastilla :texto="textoConfianza('montoFacturado')" :tono="tonoConfianza('montoFacturado')" tamano="sm" />
                       </div>
-                      <InputNumber v-model="form.montoFacturado" mode="currency" currency="DOP" locale="es-DO" fluid />
+                      <InputNumber id="f-montoFacturado" v-model="form.montoFacturado" mode="currency" currency="DOP" locale="es-DO" fluid />
                     </div>
                     <div class="campo" :class="{ 'campo--dudoso': dudoso('itbisFacturado') }">
                       <div class="campo__cabecera">
-                        <label>ITBIS facturado</label>
+                        <label for="f-itbisFacturado">ITBIS facturado</label>
                         <Pastilla :texto="textoConfianza('itbisFacturado')" :tono="tonoConfianza('itbisFacturado')" tamano="sm" />
                       </div>
                       <InputNumber
+                        id="f-itbisFacturado"
                         v-model="form.itbisFacturado"
                         mode="currency"
                         currency="DOP"
@@ -757,54 +832,55 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
                     </div>
 
                     <div class="campo">
-                      <div class="campo__cabecera"><label>ISC</label></div>
-                      <InputNumber v-model="form.isc" mode="currency" currency="DOP" locale="es-DO" fluid />
+                      <div class="campo__cabecera"><label for="f-isc">ISC</label></div>
+                      <InputNumber id="f-isc" v-model="form.isc" mode="currency" currency="DOP" locale="es-DO" fluid />
                     </div>
                     <div class="campo">
-                      <div class="campo__cabecera"><label>Otros impuestos</label></div>
-                      <InputNumber v-model="form.otrosImpuestos" mode="currency" currency="DOP" locale="es-DO" fluid />
+                      <div class="campo__cabecera"><label for="f-otrosImpuestos">Otros impuestos</label></div>
+                      <InputNumber id="f-otrosImpuestos" v-model="form.otrosImpuestos" mode="currency" currency="DOP" locale="es-DO" fluid />
                     </div>
                     <div class="campo">
-                      <div class="campo__cabecera"><label>Propina legal</label></div>
-                      <InputNumber v-model="form.propinaLegal" mode="currency" currency="DOP" locale="es-DO" fluid />
-                    </div>
-                    <div class="campo">
-                      <div class="campo__cabecera">
-                        <label>{{ formato === 'F606' ? 'ITBIS retenido' : 'ITBIS retenido por terceros' }}</label>
-                      </div>
-                      <InputNumber v-model="form.itbisRetenido" mode="currency" currency="DOP" locale="es-DO" fluid />
+                      <div class="campo__cabecera"><label for="f-propinaLegal">Propina legal</label></div>
+                      <InputNumber id="f-propinaLegal" v-model="form.propinaLegal" mode="currency" currency="DOP" locale="es-DO" fluid />
                     </div>
                     <div class="campo">
                       <div class="campo__cabecera">
-                        <label>{{ formato === 'F606' ? 'Retención renta' : 'Retención renta por terceros' }}</label>
+                        <label for="f-itbisRetenido">{{ formato === 'F606' ? 'ITBIS retenido' : 'ITBIS retenido por terceros' }}</label>
                       </div>
-                      <InputNumber v-model="form.retencionRenta" mode="currency" currency="DOP" locale="es-DO" fluid />
+                      <InputNumber id="f-itbisRetenido" v-model="form.itbisRetenido" mode="currency" currency="DOP" locale="es-DO" fluid />
                     </div>
                     <div class="campo">
-                      <div class="campo__cabecera"><label>ISR percibido</label></div>
-                      <InputNumber v-model="form.isrPercibido" mode="currency" currency="DOP" locale="es-DO" fluid />
+                      <div class="campo__cabecera">
+                        <label for="f-retencionRenta">{{ formato === 'F606' ? 'Retención renta' : 'Retención renta por terceros' }}</label>
+                      </div>
+                      <InputNumber id="f-retencionRenta" v-model="form.retencionRenta" mode="currency" currency="DOP" locale="es-DO" fluid />
+                    </div>
+                    <div class="campo">
+                      <div class="campo__cabecera"><label for="f-isrPercibido">ISR percibido</label></div>
+                      <InputNumber id="f-isrPercibido" v-model="form.isrPercibido" mode="currency" currency="DOP" locale="es-DO" fluid />
                     </div>
 
                     <template v-if="formato === 'F606'">
                       <div class="campo">
-                        <div class="campo__cabecera"><label>Servicios</label></div>
-                        <InputNumber v-model="form.montoServicios" mode="currency" currency="DOP" locale="es-DO" fluid />
+                        <div class="campo__cabecera"><label for="f-montoServicios">Servicios</label></div>
+                        <InputNumber id="f-montoServicios" v-model="form.montoServicios" mode="currency" currency="DOP" locale="es-DO" fluid />
                       </div>
                       <div class="campo">
-                        <div class="campo__cabecera"><label>Bienes</label></div>
-                        <InputNumber v-model="form.montoBienes" mode="currency" currency="DOP" locale="es-DO" fluid />
+                        <div class="campo__cabecera"><label for="f-montoBienes">Bienes</label></div>
+                        <InputNumber id="f-montoBienes" v-model="form.montoBienes" mode="currency" currency="DOP" locale="es-DO" fluid />
                       </div>
                     </template>
 
                     <template v-else-if="formato === 'F607'">
                       <div class="campo campo--ancho separador">Forma de venta</div>
                       <div class="campo">
-                        <div class="campo__cabecera"><label>Efectivo</label></div>
-                        <InputNumber v-model="form.montoEfectivo" mode="currency" currency="DOP" locale="es-DO" fluid />
+                        <div class="campo__cabecera"><label for="f-montoEfectivo">Efectivo</label></div>
+                        <InputNumber id="f-montoEfectivo" v-model="form.montoEfectivo" mode="currency" currency="DOP" locale="es-DO" fluid />
                       </div>
                       <div class="campo">
-                        <div class="campo__cabecera"><label>Cheque / transferencia</label></div>
+                        <div class="campo__cabecera"><label for="f-montoChequeTransferencia">Cheque / transferencia</label></div>
                         <InputNumber
+                          id="f-montoChequeTransferencia"
                           v-model="form.montoChequeTransferencia"
                           mode="currency"
                           currency="DOP"
@@ -813,12 +889,13 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
                         />
                       </div>
                       <div class="campo">
-                        <div class="campo__cabecera"><label>Tarjeta</label></div>
-                        <InputNumber v-model="form.montoTarjeta" mode="currency" currency="DOP" locale="es-DO" fluid />
+                        <div class="campo__cabecera"><label for="f-montoTarjeta">Tarjeta</label></div>
+                        <InputNumber id="f-montoTarjeta" v-model="form.montoTarjeta" mode="currency" currency="DOP" locale="es-DO" fluid />
                       </div>
                       <div class="campo">
-                        <div class="campo__cabecera"><label>Venta a crédito</label></div>
+                        <div class="campo__cabecera"><label for="f-montoVentaCredito">Venta a crédito</label></div>
                         <InputNumber
+                          id="f-montoVentaCredito"
                           v-model="form.montoVentaCredito"
                           mode="currency"
                           currency="DOP"
@@ -827,16 +904,17 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
                         />
                       </div>
                       <div class="campo">
-                        <div class="campo__cabecera"><label>Bonos</label></div>
-                        <InputNumber v-model="form.montoBonos" mode="currency" currency="DOP" locale="es-DO" fluid />
+                        <div class="campo__cabecera"><label for="f-montoBonos">Bonos</label></div>
+                        <InputNumber id="f-montoBonos" v-model="form.montoBonos" mode="currency" currency="DOP" locale="es-DO" fluid />
                       </div>
                       <div class="campo">
-                        <div class="campo__cabecera"><label>Permuta</label></div>
-                        <InputNumber v-model="form.montoPermuta" mode="currency" currency="DOP" locale="es-DO" fluid />
+                        <div class="campo__cabecera"><label for="f-montoPermuta">Permuta</label></div>
+                        <InputNumber id="f-montoPermuta" v-model="form.montoPermuta" mode="currency" currency="DOP" locale="es-DO" fluid />
                       </div>
                       <div class="campo">
-                        <div class="campo__cabecera"><label>Otras formas</label></div>
+                        <div class="campo__cabecera"><label for="f-montoOtrasFormas">Otras formas</label></div>
                         <InputNumber
+                          id="f-montoOtrasFormas"
                           v-model="form.montoOtrasFormas"
                           mode="currency"
                           currency="DOP"
@@ -927,12 +1005,17 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
   padding: 8px 0;
 }
 
-/* ── Cabecera ── */
+/* ── Cabecera ──
+   `pantallaCompleta` deja `.principal` sin padding propio (ver AppLayout),
+   así que cada pieza pone el suyo: la cabecera arriba/lados, el cuerpo abajo
+   y a los lados, con el mismo `gap` vertical que separaba antes ambas. */
 .cabecera {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  flex: none;
+  padding: 18px 22px 0;
 }
 .cabecera__izq {
   display: flex;
@@ -979,18 +1062,30 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
   flex: none;
 }
 
-/* ── Cuerpo ── */
+/* ── Cuerpo ──
+   60/40: el documento (3fr) es la mitad que de verdad importa mirar; el
+   formulario (2fr) se lee en ráfagas cortas para corregir un campo a la vez.
+   `flex:1;min-height:0` hace que el cuerpo ocupe el resto del alto fijo de
+   `.principal--completa`, y ese alto es lo que `.panel` reparte entre su
+   cabecera/pie (tamaño fijo) y el visor (`llenar`, ver VisorDocumento) —
+   así el documento entra completo sin scroll de página, y ya no hace falta
+   ir ajustando un alto en píxeles a mano. */
 .cuerpo {
   display: grid;
-  grid-template-columns: 1fr 1.15fr;
+  grid-template-columns: 3fr 2fr;
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+  padding: 14px 22px 18px;
 }
 .derecha {
   display: flex;
   flex-direction: column;
   gap: 14px;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
 }
 .panel {
   background: var(--superficie);
@@ -1000,6 +1095,7 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: 0;
 }
 .panel--sin-padding {
   padding: 0;
@@ -1026,19 +1122,19 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
 .herramientas {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 .herramienta {
-  width: 27px;
-  height: 27px;
+  width: 36px;
+  height: 36px;
   border: 1px solid var(--borde);
   background: var(--superficie);
-  border-radius: 8px;
+  border-radius: 9px;
   display: grid;
   place-items: center;
   cursor: pointer;
   color: var(--texto-suave);
-  font-size: 11.5px;
+  font-size: 13px;
 }
 .herramienta:hover {
   border-color: var(--teal);
@@ -1150,11 +1246,6 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
   font-weight: 700;
   color: var(--texto-suave);
   letter-spacing: 0.2px;
-}
-.campo__fila {
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 .separador {
   font-size: 12px;
@@ -1286,12 +1377,230 @@ onUnmounted(() => window.removeEventListener('keydown', onTeclado));
   line-height: 1.4;
 }
 
+/* Mismo punto de quiebre en el que `.principal--completa` (AppLayout) vuelve
+   a `height:auto` — aquí ya no hay una altura de viewport fija que repartir
+   entre el documento y el formulario, así que `.cuerpo` y sus paneles vuelven
+   al flujo normal (alto por contenido, scroll de página). El visor ya lo
+   sabe por su cuenta: ver `anchoAngosto`, que en este ancho apaga `llenar`. */
 @media (max-width: 1200px) {
   .cuerpo {
     grid-template-columns: 1fr;
+    flex: none;
+    min-height: 0;
+  }
+  .derecha {
+    overflow-y: visible;
   }
   .resumenes {
     grid-template-columns: 1fr;
+  }
+}
+
+.herramienta-movil { display: none; }
+
+@media (max-width: 768px) {
+  .cabecera {
+    flex-wrap: wrap;
+    padding: 14px 16px;
+    gap: 10px;
+  }
+  .cabecera__acciones {
+    gap: 6px;
+  }
+  .cabecera__acciones :deep(.p-button) {
+    font-size: 12.5px;
+    padding: 7px 12px;
+  }
+  .cabecera__acciones :deep(.p-button .p-button-icon) {
+    font-size: 11px;
+  }
+  .cabecera__titulo h1 {
+    font-size: 19px;
+  }
+  .cuerpo {
+    gap: 12px;
+    padding: 12px 16px 16px;
+  }
+  .campos {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    padding: 14px 16px 20px;
+  }
+  .campos :deep(.p-inputtext),
+  .campos :deep(.p-select) {
+    height: 44px;
+    font-size: 14px;
+  }
+  .campos :deep(.p-inputtext) {
+    padding: 0 14px;
+  }
+  .campos :deep(.p-select-label) {
+    font-size: 14px;
+    padding: 0 14px;
+  }
+  .herramienta {
+    width: 30px;
+    height: 30px;
+    font-size: 13px;
+  }
+  .herramienta-desktop {
+    display: none;
+  }
+  .herramienta-movil {
+    display: grid;
+  }
+  .clasificar {
+    padding: 14px 16px;
+  }
+  .clasificar__campos > * {
+    width: 100%;
+    max-width: none;
+  }
+  .resumen-seccion {
+    padding: 16px;
+  }
+  .pestanas :deep(.p-tablist) {
+    padding: 0 16px;
+  }
+  .pestanas :deep(.p-tablist-tab-list) {
+    gap: 20px;
+  }
+  .validacion > i {
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 480px) {
+  .cabecera {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .cabecera__titulo h1 {
+    font-size: 17px;
+  }
+  .cabecera__titulo {
+    gap: 6px;
+  }
+  .cabecera__sub {
+    font-size: 11px;
+  }
+  .cabecera__acciones :deep(.p-button) {
+    font-size: 12px;
+    padding: 6px 10px;
+  }
+  .cabecera__acciones :deep(.p-button .p-button-icon) {
+    font-size: 10px;
+  }
+  .volver {
+    font-size: 11px;
+    gap: 4px;
+  }
+  .cuerpo {
+    gap: 8px;
+    padding: 10px 12px 14px;
+  }
+  .panel {
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .panel--sin-padding {
+    padding: 0;
+  }
+  .panel__titulo {
+    font-size: 12.5px;
+  }
+  .herramientas {
+    gap: 4px;
+  }
+  .herramienta {
+    width: 26px;
+    height: 26px;
+    font-size: 11px;
+    border-radius: 6px;
+  }
+  .campos {
+    padding: 12px 10px 16px;
+    gap: 12px;
+  }
+  .campos :deep(.p-inputtext),
+  .campos :deep(.p-select) {
+    height: 40px;
+    font-size: 13.5px;
+    border-radius: 8px;
+  }
+  .campos :deep(.p-inputtext) {
+    padding: 0 12px;
+  }
+  .campos :deep(.p-select-label) {
+    font-size: 13.5px;
+    padding: 0 12px;
+  }
+  .campo__cabecera label {
+    font-size: 12px;
+  }
+  .declarado {
+    padding: 9px 11px;
+    border-radius: 8px;
+  }
+  .declarado__valor {
+    font-size: 14.5px;
+  }
+  .declarado__label {
+    font-size: 12px;
+  }
+  .resumen-seccion {
+    padding: 12px 10px 14px;
+  }
+  .resumen-seccion__titulo {
+    font-size: 12.5px;
+  }
+  .total {
+    font-size: 12px;
+  }
+  .clasificar {
+    padding: 12px 10px;
+  }
+  .clasificar p {
+    font-size: 12.5px;
+  }
+  .clasificar :deep(.p-select) {
+    height: 40px;
+    border-radius: 8px;
+  }
+  .clasificar :deep(.p-button) {
+    height: 36px;
+    font-size: 13.5px;
+    width: 100%;
+  }
+  .panel__pie {
+    font-size: 10.5px;
+  }
+  .enlace {
+    font-size: 11.5px;
+  }
+  .pestanas :deep(.p-tab) {
+    padding: 10px 2px 8px;
+    font-size: 12.5px;
+  }
+  .pestanas :deep(.p-tablist) {
+    padding: 0 10px;
+  }
+  .validacion {
+    padding: 7px 9px;
+    border-radius: 8px;
+  }
+  .validacion > i {
+    font-size: 10px;
+  }
+  .nota {
+    font-size: 11.5px;
+  }
+  .alerta-rnc {
+    font-size: 11.5px;
+    padding: 7px 9px;
+  }
+  .alerta-rnc > i {
+    font-size: 10.5px;
   }
 }
 </style>

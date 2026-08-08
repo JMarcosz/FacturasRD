@@ -3,6 +3,7 @@ import type { Response } from 'express';
 import { Auth } from '../auth/auth.decorator';
 import { ExportacionService } from './exportacion.service';
 import { ExcelPorRangoQueryDto } from './dto/excel-por-rango-query.dto';
+import { ExcelCompletoQueryDto } from './dto/excel-completo-query.dto';
 import { HistorialQueryDto } from './dto/historial-query.dto';
 
 @Auth()
@@ -15,6 +16,23 @@ export class ReporteriaController {
     const { buffer, filename } = await this.exportacionService.generarExcelPorRango(
       query.clienteId,
       query.formato,
+      query.desde,
+      query.hasta,
+    );
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  }
+
+  /**
+   * Volcado de consulta con TODO lo extraído del rango — incluidas las
+   * facturas sin clasificar, que `excel-rango` excluye a propósito. No pide
+   * `formato`: es una sola hoja, no un archivo por formato de la DGII.
+   */
+  @Get('excel-completo')
+  async excelCompleto(@Query() query: ExcelCompletoQueryDto, @Res() res: Response) {
+    const { buffer, filename } = await this.exportacionService.generarExcelCompleto(
+      query.clienteId,
       query.desde,
       query.hasta,
     );

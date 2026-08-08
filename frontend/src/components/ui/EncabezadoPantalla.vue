@@ -43,4 +43,35 @@ defineProps<{ titulo: string; subtitulo?: string }>();
   align-items: center;
   gap: 8px;
 }
+
+@media (max-width: 768px) {
+  .encabezado {
+    gap: 10px;
+  }
+  .encabezado__texto h1 {
+    font-size: 20px;
+  }
+  .encabezado__acciones {
+    gap: 6px;
+  }
+}
+
+@media (max-width: 480px) {
+  .encabezado {
+    gap: 8px;
+  }
+  .encabezado__texto h1 {
+    font-size: 18px;
+  }
+  .encabezado__texto p {
+    font-size: 12px;
+  }
+  .encabezado__acciones :deep(.p-button) {
+    font-size: 12px;
+    padding: 6px 10px;
+  }
+  .encabezado__acciones :deep(.p-button .p-button-icon) {
+    font-size: 11px;
+  }
+}
 </style>

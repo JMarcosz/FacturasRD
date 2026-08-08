@@ -15,7 +15,10 @@ import {
   generarExcel607Multicliente,
   generarTxt606,
   generarTxt607,
+  identificacionDeclarada,
 } from '../dgii';
+import { generarExcelCompleto } from './excel-completo';
+import { construirWhereFacturas } from '../facturas/where-facturas';
 
 const MIME_EXCEL = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -26,7 +29,7 @@ function aDecimal(valor: Prisma.Decimal | number | null | undefined): Decimal {
 
 function a607(f: Factura): FacturaDgii607 {
   return {
-    rncCedula: f.rncCedula,
+    rncCedula: identificacionDeclarada('F607', f),
     tipoIdentificacion: f.tipoIdentificacion as FacturaDgii607['tipoIdentificacion'],
     ncf: f.ncf,
     ncfModificado: f.ncfModificado,
@@ -54,7 +57,7 @@ function a607(f: Factura): FacturaDgii607 {
 
 function a606(f: Factura): FacturaDgii606 {
   return {
-    rncCedula: f.rncCedula,
+    rncCedula: identificacionDeclarada('F606', f),
     tipoIdentificacion: f.tipoIdentificacion as FacturaDgii606['tipoIdentificacion'],
     ncf: f.ncf,
     ncfModificado: f.ncfModificado,
@@ -210,7 +213,7 @@ export class ExportacionService {
       where: {
         // `clienteId: undefined` en Prisma significa "sin filtro", NO "cualquier
         // cliente", y la columna es nullable: sin el `{ not: null }` se colarían
-        // como filas basura todas las facturas SIN CLASIFICAR (rncCedula '').
+        // como filas basura todas las facturas SIN CLASIFICAR (sin cliente ni formato).
         clienteId: clienteId ?? { not: null },
         formato,
         fechaComprobante: { gte: new Date(desde), lte: new Date(hasta) },
@@ -239,6 +242,35 @@ export class ExportacionService {
       return { buffer, filename };
     }
     const buffer = await generarExcel606Multicliente(facturas.map((f) => ({ ...datosCliente(f), ...a606(f) })));
+    return { buffer, filename };
+  }
+
+  /**
+   * Volcado de consulta con todo lo extraído en el rango, clasificado o no.
+   * Usa el MISMO `where` que la tabla de Facturas (`construirWhereFacturas`,
+   * sin `formato` ni `estado`) para que lo que se descarga sea exactamente lo
+   * que la pantalla está mostrando, no un recorte aparte con sus propias reglas.
+   */
+  async generarExcelCompleto(
+    clienteId: string | undefined,
+    desde: string,
+    hasta: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const cliente = clienteId ? await this.prisma.cliente.findUnique({ where: { id: clienteId } }) : null;
+    if (clienteId && !cliente) throw new NotFoundException(`Cliente ${clienteId} no encontrado.`);
+
+    const where = construirWhereFacturas({ clienteId, desde, hasta });
+    const facturas = await this.prisma.factura.findMany({
+      where,
+      orderBy: [{ fechaComprobante: 'asc' }],
+      include: {
+        cliente: { select: { nombre: true, rnc: true } },
+        validaciones: { select: { severidad: true } },
+      },
+    });
+
+    const buffer = await generarExcelCompleto(facturas);
+    const filename = `todo_${cliente?.rnc ?? 'todos'}_${desde}_a_${hasta}.xlsx`;
     return { buffer, filename };
   }
 

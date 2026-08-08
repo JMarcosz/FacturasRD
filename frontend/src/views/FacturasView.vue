@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
+import type { ToastMessageOptions } from 'primevue/toast';
 import Button from 'primevue/button';
 import Column from 'primevue/column';
 import DataTable from 'primevue/datatable';
@@ -34,6 +35,7 @@ import { listarClientes } from '../api/clientes';
 import { descargarExcelPorRango } from '../api/exportacion';
 import { aYyyymm, delta, obtenerEstadisticasFacturas, obtenerResumen } from '../api/estadisticas';
 import { useCatalogosStore } from '../stores/catalogos';
+import { useSeleccionStore } from '../stores/seleccion';
 import { fmtFechaCorta, fmtMonto, fmtMontoCorto, fmtYyyymm } from '../formato';
 import type { Cliente, Documento, EstadisticasFacturas, Factura, ResumenEstadisticas } from '../types';
 
@@ -41,7 +43,19 @@ const route = useRoute();
 const router = useRouter();
 const confirm = useConfirm();
 const toast = useToast();
+
+/**
+ * `ToastMessageOptions` no declara `data` (aunque el componente lo reenvía
+ * tal cual al slot `#message` de App.vue): se amplía aquí para poder adjuntar
+ * el enlace al paso siguiente sin `as any` en cada `toast.add(...)`.
+ */
+interface AccionToast {
+  label: string;
+  ruta: { name: string; query?: Record<string, string> };
+}
+type ToastConAccion = ToastMessageOptions & { data?: { accion: AccionToast } };
 const catalogos = useCatalogosStore();
+const seleccionStore = useSeleccionStore();
 
 const layout = ref<InstanceType<typeof AppLayout> | null>(null);
 
@@ -50,8 +64,19 @@ const pendientes = ref<Documento[]>([]);
 const clientes = ref<Cliente[]>([]);
 const stats = ref<EstadisticasFacturas | null>(null);
 const resumen = ref<ResumenEstadisticas | null>(null);
-const seleccion = ref<Factura[]>([]);
 const descartadas = ref<string[]>([]);
+
+/**
+ * La selección vive en un store (no en un `ref` local) para sobrevivir a
+ * navegar al detalle de una factura y volver — antes, ese viaje desmontaba
+ * la vista y la selección se perdía en silencio. El componente solo guarda
+ * IDs; aquí se cruzan contra la lista actual para que el `v-model:selection`
+ * de la tabla siga viendo objetos `Factura` completos.
+ */
+const seleccion = computed<Factura[]>({
+  get: () => facturas.value.filter((f) => seleccionStore.ids.has(f.id)),
+  set: (filas) => seleccionStore.set(filas.map((f) => f.id)),
+});
 
 const mostrarDialogoAsignar = ref(false);
 const asignarClienteId = ref('');
@@ -95,28 +120,43 @@ const formatoSeleccion = computed<'F606' | 'F607' | 'mixto' | 'sin_clasificar'>(
 const cargando = ref(true);
 const subiendo = ref(false);
 const arrastrando = ref(false);
-const busquedaTexto = ref('');
+const busquedaTexto = ref(stringDeQuery(route.query.q));
 const inputArchivo = ref<HTMLInputElement | null>(null);
 const popMasFiltros = ref<InstanceType<typeof Popover> | null>(null);
 
 // ── Filtros ──────────────────────────────────────────────────────────────────
-type Clasificacion = 'todas' | 'F606' | 'F607' | 'sin_clasificar';
-type Origen = 'todos' | 'IA' | 'MANUAL' | 'EDITADA';
-type Revision = 'todas' | 'si' | 'no';
+// "Sin clasificar" y "Editadas a mano" NO son opciones aquí: ya son vistas
+// rápidas (más abajo) y tenerlas también en estos desplegables era el mismo
+// filtro expuesto dos veces, sin coordinación entre sí (podían combinarse en
+// silencio y vaciar la tabla sin explicación). Cada filtro vive en un solo sitio.
+type Clasificacion = 'todas' | 'F606' | 'F607';
+type Origen = 'todos' | 'IA' | 'MANUAL';
+type Confirmacion = 'todas' | 'si' | 'no';
+
+function stringDeQuery(v: unknown, fallback = ''): string {
+  return typeof v === 'string' ? v : fallback;
+}
 
 const filtros = reactive({
-  clienteId: typeof route.query.clienteId === 'string' ? route.query.clienteId : '',
-  clasificacion: 'todas' as Clasificacion,
-  tipoNcf: '',
-  origen: 'todos' as Origen,
-  revision: 'todas' as Revision,
+  clienteId: stringDeQuery(route.query.clienteId),
+  clasificacion: (stringDeQuery(route.query.clasificacion, 'todas') as Clasificacion) || 'todas',
+  tipoNcf: stringDeQuery(route.query.tipoNcf),
+  origen: (stringDeQuery(route.query.origen, 'todos') as Origen) || 'todos',
+  confirmacion: (stringDeQuery(route.query.confirmacion, 'todas') as Confirmacion) || 'todas',
 });
+
+function yyyymmDeQuery(v: unknown): Date | null {
+  if (typeof v !== 'string' || !/^\d{6}$/.test(v)) return null;
+  const anio = Number(v.slice(0, 4));
+  const mesNum = Number(v.slice(4, 6));
+  return new Date(anio, mesNum - 1, 1);
+}
 
 // `null` = "Todos los meses". Antes arrancaba en el mes de hoy y el listado
 // salía vacío en cuanto las facturas subidas tenían fechas de otros meses
 // (o de años anteriores) — exactamente lo que pasa con un lote recién
 // escaneado, cuyas fechas las pone el propio comprobante, no la subida.
-const mes = ref<Date | null>(null);
+const mes = ref<Date | null>(yyyymmDeQuery(route.query.mes));
 
 const opcionesCliente = computed(() => [
   { label: 'Todos', value: '' },
@@ -126,7 +166,6 @@ const opcionesClasificacion: Array<{ label: string; value: Clasificacion }> = [
   { label: 'Todas', value: 'todas' },
   { label: 'Gasto · 606', value: 'F606' },
   { label: 'Ingreso · 607', value: 'F607' },
-  { label: 'Sin clasificar', value: 'sin_clasificar' },
 ];
 const opcionesTipoNcf = computed(() => [
   { label: 'Todos', value: '' },
@@ -136,12 +175,11 @@ const opcionesOrigen: Array<{ label: string; value: Origen }> = [
   { label: 'Todos', value: 'todos' },
   { label: 'Extraídas por la IA', value: 'IA' },
   { label: 'Creadas a mano', value: 'MANUAL' },
-  { label: 'Editadas a mano', value: 'EDITADA' },
 ];
-const opcionesRevision: Array<{ label: string; value: Revision }> = [
+const opcionesConfirmacion: Array<{ label: string; value: Confirmacion }> = [
   { label: 'Todas', value: 'todas' },
-  { label: 'Revisadas', value: 'si' },
-  { label: 'Sin revisar', value: 'no' },
+  { label: 'Confirmadas', value: 'si' },
+  { label: 'Sin confirmar', value: 'no' },
 ];
 
 const nombreMes = computed(() => (mes.value ? fmtYyyymm(yyyymm.value).split(' ')[0] : 'Todos los meses'));
@@ -165,18 +203,29 @@ const rango = computed(() => {
   return { desde: iso(new Date(y, m, 1)), hasta: iso(new Date(y, m + 1, 0)) };
 });
 
-/** Lo que entiende la API. El resto (tipo NCF, origen, revisión, texto) se filtra aquí. */
+/** Lo que entiende la API. El resto (tipo NCF, origen, confirmación, vista, texto) se filtra aquí. */
 const filtrosApi = computed<FiltrosFacturas>(() => ({
   clienteId: filtros.clienteId || undefined,
   formato: filtros.clasificacion === 'F606' || filtros.clasificacion === 'F607' ? filtros.clasificacion : undefined,
-  estado: filtros.clasificacion === 'sin_clasificar' ? 'sin_clasificar' : undefined,
   desde: rango.value.desde,
   hasta: rango.value.hasta,
 }));
 
 // ── Vistas rápidas ───────────────────────────────────────────────────────────
-type Vista = 'sin_clasificar' | 'error' | 'revisadas' | 'itbis_alto' | 'editadas';
-const vista = ref<Vista | null>(null);
+// 'por_confirmar' es la antigua pantalla de Triaje, consolidada aquí como
+// filtro guardado: el ítem "Triaje" del menú y el hilo conductor
+// (`useHiloConductor`) navegan a /facturas?vista=por_confirmar.
+type Vista = 'sin_clasificar' | 'error' | 'por_confirmar' | 'itbis_alto' | 'editadas';
+const vistaInicial = stringDeQuery(route.query.vista);
+const vista = ref<Vista | null>(
+  vistaInicial === 'sin_clasificar' ||
+    vistaInicial === 'error' ||
+    vistaInicial === 'por_confirmar' ||
+    vistaInicial === 'itbis_alto' ||
+    vistaInicial === 'editadas'
+    ? vistaInicial
+    : null,
+);
 
 function tieneError(f: Factura): boolean {
   return (f.validaciones ?? []).some((v) => v.severidad === 'ERROR');
@@ -185,7 +234,7 @@ function tieneError(f: Factura): boolean {
 const PREDICADOS: Record<Vista, (f: Factura) => boolean> = {
   sin_clasificar: (f) => !f.formato,
   error: tieneError,
-  revisadas: (f) => f.revisada,
+  por_confirmar: (f) => !!f.clienteId && !f.clasificacionConfirmada,
   itbis_alto: (f) => Number(f.itbisFacturado) > 5000,
   editadas: (f) => f.origen === 'EDITADA',
 };
@@ -194,7 +243,7 @@ const vistas = computed(() => {
   const def: Array<{ id: Vista; label: string; tono: 'alerta' | 'error' | 'ok' | 'neutro' }> = [
     { id: 'sin_clasificar', label: 'Sin clasificar', tono: 'alerta' },
     { id: 'error', label: 'Con error', tono: 'error' },
-    { id: 'revisadas', label: 'Revisadas', tono: 'ok' },
+    { id: 'por_confirmar', label: 'Por confirmar', tono: 'alerta' },
     { id: 'itbis_alto', label: 'ITBIS > RD$5,000', tono: 'neutro' },
     { id: 'editadas', label: 'Editadas a mano', tono: 'neutro' },
   ];
@@ -210,7 +259,8 @@ const facturasFiltradas = computed(() => {
   if (vista.value) lista = lista.filter(PREDICADOS[vista.value]);
   if (filtros.tipoNcf) lista = lista.filter((f) => f.tipoNcf?.codigo === filtros.tipoNcf);
   if (filtros.origen !== 'todos') lista = lista.filter((f) => f.origen === filtros.origen);
-  if (filtros.revision !== 'todas') lista = lista.filter((f) => f.revisada === (filtros.revision === 'si'));
+  if (filtros.confirmacion !== 'todas')
+    lista = lista.filter((f) => f.clasificacionConfirmada === (filtros.confirmacion === 'si'));
   const q = busquedaTexto.value.trim().toLowerCase();
   if (q) {
     lista = lista.filter((f) =>
@@ -326,6 +376,28 @@ watch(filtrosApi, async () => {
   await Promise.all([cargarFacturas(), cargarResumen()]);
 });
 
+/**
+ * Filtros, mes y búsqueda reflejados en la URL: volver desde el detalle de
+ * una factura (o compartir el enlace) restaura exactamente lo que se estaba
+ * viendo. Se arma como un objeto plano (`router.replace`, no `push`, para no
+ * ensuciar el historial en cada tecla) y solo lleva las claves con valor —
+ * una URL con todos los "todos"/"todas" explícitos sería ilegible.
+ */
+const queryPersistido = computed<Record<string, string>>(() => {
+  const q: Record<string, string> = {};
+  if (filtros.clienteId) q.clienteId = filtros.clienteId;
+  if (filtros.clasificacion !== 'todas') q.clasificacion = filtros.clasificacion;
+  if (filtros.tipoNcf) q.tipoNcf = filtros.tipoNcf;
+  if (filtros.origen !== 'todos') q.origen = filtros.origen;
+  if (filtros.confirmacion !== 'todas') q.confirmacion = filtros.confirmacion;
+  if (mes.value) q.mes = `${mes.value.getFullYear()}${String(mes.value.getMonth() + 1).padStart(2, '0')}`;
+  if (busquedaTexto.value.trim()) q.q = busquedaTexto.value.trim();
+  if (vista.value) q.vista = vista.value;
+  return q;
+});
+
+watch(queryPersistido, (q) => router.replace({ name: 'facturas', query: q }));
+
 // ── Acciones ─────────────────────────────────────────────────────────────────
 function refrescarSidebar() {
   layout.value?.refrescarResumen();
@@ -408,12 +480,14 @@ async function asignarClienteYFormatoLote() {
     mostrarDialogoAsignar.value = false;
     await Promise.all([cargarFacturas(), cargarResumen()]);
     refrescarSidebar();
-    toast.add({
+    const opciones: ToastConAccion = {
       severity: r.fallidas.length ? 'warn' : 'success',
       summary: `${r.procesadas} de ${r.solicitadas} clasificadas`,
       detail: r.fallidas.length ? `${r.fallidas.length} no se pudieron clasificar.` : undefined,
       life: 4000,
-    });
+      data: r.procesadas > 0 ? { accion: { label: 'Confirmar', ruta: { name: 'facturas', query: { vista: 'por_confirmar' } } } } : undefined,
+    };
+    toast.add(opciones);
   } catch (e: any) {
     toast.add({
       severity: 'error',
@@ -458,12 +532,14 @@ async function aplicarClasificacionFiscalLote() {
     mostrarDialogoFiscal.value = false;
     await Promise.all([cargarFacturas(), cargarResumen()]);
     refrescarSidebar();
-    toast.add({
+    const opciones: ToastConAccion = {
       severity: r.fallidas.length ? 'warn' : 'success',
       summary: `${r.procesadas} de ${r.solicitadas} actualizadas`,
       detail: r.fallidas.length ? `${r.fallidas.length} fallaron: ${r.fallidas[0].motivo}` : undefined,
       life: 5000,
-    });
+      data: r.procesadas > 0 ? { accion: { label: 'Confirmar', ruta: { name: 'facturas', query: { vista: 'por_confirmar' } } } } : undefined,
+    };
+    toast.add(opciones);
   } catch (e: any) {
     toast.add({
       severity: 'error',
@@ -483,11 +559,13 @@ async function confirmarClasificacionSeleccion() {
     const r = await confirmarClasificacionLote(ids);
     seleccion.value = [];
     await cargarFacturas();
-    toast.add({
+    const opciones: ToastConAccion = {
       severity: 'success',
       summary: `${r.procesadas} clasificaciones confirmadas`,
-      life: 3000,
-    });
+      life: 4000,
+      data: r.procesadas > 0 ? { accion: { label: 'Descargar reportes', ruta: { name: 'reporteria' } } } : undefined,
+    };
+    toast.add(opciones);
   } catch (e: any) {
     toast.add({
       severity: 'error',
@@ -780,15 +858,22 @@ onUnmounted(() => {
 
           <Popover ref="popMasFiltros">
             <div class="mas-filtros__panel">
-              <label>
+              <label for="flt-origen">
                 <span>Origen</span>
-                <Select v-model="filtros.origen" :options="opcionesOrigen" option-label="label" option-value="value" />
-              </label>
-              <label>
-                <span>Revisión</span>
                 <Select
-                  v-model="filtros.revision"
-                  :options="opcionesRevision"
+                  v-model="filtros.origen"
+                  input-id="flt-origen"
+                  :options="opcionesOrigen"
+                  option-label="label"
+                  option-value="value"
+                />
+              </label>
+              <label for="flt-confirmacion">
+                <span>Confirmación</span>
+                <Select
+                  v-model="filtros.confirmacion"
+                  input-id="flt-confirmacion"
+                  :options="opcionesConfirmacion"
                   option-label="label"
                   option-value="value"
                 />
@@ -841,10 +926,7 @@ onUnmounted(() => {
           <template #body="{ data }: { data: Factura }">
             <div class="comercio">
               <AvatarIniciales :nombre="data.nombreEmisor" />
-              <div class="comercio__texto">
-                <span class="comercio__nombre">{{ data.nombreEmisor ?? '—' }}</span>
-                <span class="comercio__archivo">{{ data.documento?.filename ?? '—' }}</span>
-              </div>
+              <span class="comercio__nombre">{{ data.nombreEmisor ?? '—' }}</span>
             </div>
           </template>
         </Column>
@@ -858,12 +940,6 @@ onUnmounted(() => {
         <Column field="fechaComprobante" header="Fecha" sortable>
           <template #body="{ data }: { data: Factura }">
             <span class="tenue nowrap">{{ fmtFechaCorta(data.fechaComprobante) }}</span>
-          </template>
-        </Column>
-
-        <Column header="Cliente">
-          <template #body="{ data }: { data: Factura }">
-            <span class="tenue">{{ data.cliente?.nombre ?? '—' }}</span>
           </template>
         </Column>
 
@@ -906,10 +982,16 @@ onUnmounted(() => {
         <Column header="Acciones" header-class="col-der" body-class="col-der">
           <template #body="{ data }: { data: Factura }">
             <div class="acciones">
-              <button type="button" class="accion" title="Editar" @click="abrirFactura(data)">
+              <button type="button" class="accion" title="Editar" aria-label="Editar factura" @click="abrirFactura(data)">
                 <i class="pi pi-pencil"></i>
               </button>
-              <button type="button" class="accion accion--peligro" title="Eliminar" @click="confirmarEliminar(data)">
+              <button
+                type="button"
+                class="accion accion--peligro"
+                title="Eliminar"
+                aria-label="Eliminar factura"
+                @click="confirmarEliminar(data)"
+              >
                 <i class="pi pi-trash"></i>
               </button>
             </div>
@@ -979,10 +1061,11 @@ onUnmounted(() => {
 
     <Dialog v-model:visible="mostrarDialogoAsignar" header="Asignar cliente y formato" :modal="true" :style="{ width: '420px' }">
       <div class="dialogo-asignar">
-        <label>
+        <label for="dlg-asignar-cliente">
           <span>Cliente (contribuyente)</span>
           <Select
             v-model="asignarClienteId"
+            input-id="dlg-asignar-cliente"
             :options="opcionesCliente.filter((o) => o.value !== '')"
             option-label="label"
             option-value="value"
@@ -990,10 +1073,11 @@ onUnmounted(() => {
             class="w-full"
           />
         </label>
-        <label>
+        <label for="dlg-asignar-formato">
           <span>Formato</span>
           <Select
             v-model="asignarFormato"
+            input-id="dlg-asignar-formato"
             :options="[{ label: 'Ingreso · 607', value: 'F607' }, { label: 'Gasto · 606', value: 'F606' }]"
             option-label="label"
             option-value="value"
@@ -1031,10 +1115,11 @@ onUnmounted(() => {
         </p>
 
         <template v-else-if="formatoSeleccion === 'F607'">
-          <label>
+          <label for="dlg-fiscal-tipo-ingreso">
             <span>Tipo de ingreso</span>
             <Select
               v-model="fiscalTipoIngreso"
+              input-id="dlg-fiscal-tipo-ingreso"
               :options="catalogos.etiquetar(catalogos.catalogos.tiposIngreso607)"
               option-label="etiqueta"
               option-value="codigo"
@@ -1043,10 +1128,11 @@ onUnmounted(() => {
               class="w-full"
             />
           </label>
-          <label>
+          <label for="dlg-fiscal-forma-venta">
             <span>Forma de venta</span>
             <Select
               v-model="fiscalFormaVenta"
+              input-id="dlg-fiscal-forma-venta"
               :options="OPCIONES_FORMA_VENTA"
               option-label="label"
               option-value="value"
@@ -1062,10 +1148,11 @@ onUnmounted(() => {
         </template>
 
         <template v-else>
-          <label>
+          <label for="dlg-fiscal-tipo-bienes">
             <span>Tipo de bienes y servicios</span>
             <Select
               v-model="fiscalTipoBienesServicios"
+              input-id="dlg-fiscal-tipo-bienes"
               :options="catalogos.etiquetar(catalogos.catalogos.tiposBienesServicios606)"
               option-label="etiqueta"
               option-value="codigo"
@@ -1074,10 +1161,11 @@ onUnmounted(() => {
               class="w-full"
             />
           </label>
-          <label>
+          <label for="dlg-fiscal-forma-pago">
             <span>Forma de pago</span>
             <Select
               v-model="fiscalFormaPago"
+              input-id="dlg-fiscal-forma-pago"
               :options="catalogos.etiquetar(catalogos.catalogos.formasPago606)"
               option-label="etiqueta"
               option-value="codigo"
@@ -1399,19 +1487,10 @@ onUnmounted(() => {
   align-items: center;
   gap: 9px;
 }
-.comercio__texto {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.25;
-  min-width: 0;
-}
 .comercio__nombre {
   font-weight: 600;
   color: var(--texto);
-}
-.comercio__archivo {
-  font-size: 10.5px;
-  color: var(--texto-debil);
+  min-width: 0;
 }
 .tenue {
   color: var(--texto-medio);

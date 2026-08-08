@@ -99,4 +99,46 @@ const textoDelta = computed(() => {
   color: var(--texto-debil);
   font-weight: 500;
 }
+
+@media (max-width: 768px) {
+  .kpi {
+    padding: 12px 14px;
+    gap: 7px;
+  }
+  .kpi__valor {
+    font-size: 22px;
+  }
+  .kpi__icono {
+    width: 22px;
+    height: 22px;
+    flex: 0 0 22px;
+    border-radius: 6px;
+  }
+  .kpi__icono :deep(i) {
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 480px) {
+  .kpi {
+    padding: 10px 12px;
+    gap: 6px;
+    border-radius: 10px;
+  }
+  .kpi__valor {
+    font-size: 20px;
+    letter-spacing: -0.6px;
+  }
+  .kpi__label {
+    font-size: 11px;
+  }
+  .kpi__delta {
+    font-size: 10.5px;
+  }
+  .kpi__icono {
+    width: 20px;
+    height: 20px;
+    flex: 0 0 20px;
+  }
+}
 </style>

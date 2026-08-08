@@ -14,9 +14,9 @@ import type { FormaVenta607 } from '../../dgii';
 
 /**
  * Solo campos de clasificación. La lista está acotada a propósito: ninguno de
- * estos entra en la clave `rncCedula:ncf`, lo que permite calcular los NCF ya
- * declarados una vez por lote en vez de una por fila. NCF, fechas y montos
- * siguen siendo edición de a una.
+ * estos entra en la clave identificación declarada + NCF, lo que permite
+ * calcular los NCF ya declarados una vez por lote en vez de una por fila.
+ * NCF, fechas y montos siguen siendo edición de a una.
  */
 export class CamposLoteDto {
   @IsOptional() @IsString() tipoBienesServicios?: string;

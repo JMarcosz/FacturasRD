@@ -52,10 +52,10 @@ describe('derivarFactura607', () => {
     expect(avisos.find((a) => a.campo === 'tipoIngreso')).toBeUndefined();
   });
 
-  it('avisa cuando el cliente no tiene tipoIngresoDefault', () => {
+  it('usa "01" por defecto y avisa cuando el cliente no tiene tipoIngresoDefault', () => {
     const clienteSinTipo: ConfiguracionCliente = { ...clienteConTipoIngreso, tipoIngresoDefault: null };
     const { factura, avisos } = derivarFactura607(hechosBase(), clienteSinTipo);
-    expect(factura.tipoIngreso).toBe('');
+    expect(factura.tipoIngreso).toBe('01');
     expect(avisos.some((a) => a.campo === 'tipoIngreso')).toBe(true);
   });
 

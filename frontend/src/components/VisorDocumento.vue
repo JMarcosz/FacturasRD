@@ -9,8 +9,15 @@ import { obtenerArchivoDocumento } from '../api/documentos';
  * `object-fit: contain`, igual que la bandeja gris del diseño.
  */
 const props = withDefaults(
-  defineProps<{ documentoId: string; mimeType: string; proporcion?: string; altoMaximo?: string }>(),
-  { proporcion: '3 / 4', altoMaximo: 'min(70vh, 640px)' },
+  defineProps<{
+    documentoId: string;
+    mimeType: string;
+    proporcion?: string;
+    altoMaximo?: string;
+    /** En vez de un tamaño fijo por aspect-ratio, ocupa todo el alto del panel contenedor (requiere que ese panel tenga una altura definida — ver FacturaDetalleView). */
+    llenar?: boolean;
+  }>(),
+  { proporcion: '3 / 4', altoMaximo: 'min(70vh, 640px)', llenar: false },
 );
 
 const objectUrl = ref<string | null>(null);
@@ -62,7 +69,10 @@ defineExpose({ recargar: cargar, acercar, alejar, rotar, abrirAparte, zoom });
 </script>
 
 <template>
-  <div class="visor__lienzo" :style="{ aspectRatio: proporcion, maxHeight: altoMaximo }">
+  <div
+    class="visor__lienzo"
+    :style="llenar ? { flex: '1', width: '100%', height: '100%', minHeight: '0' } : { aspectRatio: proporcion, maxHeight: altoMaximo }"
+  >
     <p v-if="cargando" class="visor__estado">Cargando documento…</p>
     <template v-else-if="objectUrl">
       <embed v-if="mimeType === 'application/pdf'" :src="objectUrl" type="application/pdf" class="visor__pdf" />

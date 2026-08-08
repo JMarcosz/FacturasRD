@@ -178,9 +178,17 @@ onMounted(() => {
               <Pastilla :texto="r.activo ? 'Activa' : 'Inactiva'" :tono="r.activo ? 'ok' : 'neutro'" />
             </div>
             <div class="regla-tarjeta__acciones">
-              <Button icon="pi pi-power-off" size="small" :severity="r.activo ? 'secondary' : 'success'" text @click="toggleActivo(r)" :title="r.activo ? 'Desactivar' : 'Activar'" />
-              <Button icon="pi pi-pencil" size="small" text @click="abrirDialogo(r)" />
-              <Button icon="pi pi-trash" size="small" severity="danger" text @click="eliminar(r.id)" />
+              <Button
+                icon="pi pi-power-off"
+                size="small"
+                :severity="r.activo ? 'secondary' : 'success'"
+                text
+                @click="toggleActivo(r)"
+                :title="r.activo ? 'Desactivar' : 'Activar'"
+                :aria-label="r.activo ? 'Desactivar regla' : 'Activar regla'"
+              />
+              <Button icon="pi pi-pencil" size="small" text @click="abrirDialogo(r)" title="Editar" aria-label="Editar regla" />
+              <Button icon="pi pi-trash" size="small" severity="danger" text @click="eliminar(r.id)" title="Eliminar" aria-label="Eliminar regla" />
             </div>
           </div>
           <div class="regla-tarjeta__detalles">
@@ -460,5 +468,23 @@ onMounted(() => {
 }
 .vacio .boton-primario {
   margin-top: 4px;
+}
+
+@media (max-width: 768px) {
+  .form {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .regla-tarjeta { padding: 12px; }
+  .regla-tarjeta__nombre { font-size: 13px; }
+  .regla-tarjeta__detalles { gap: 12px; }
+  .metrica__label { font-size: 10px; }
+  .metrica__valor { font-size: 12px; }
+  .lista-reglas { gap: 10px; }
+  .vacio__icono { width: 36px; height: 36px; border-radius: 10px; font-size: 16px; }
+  .vacio__titulo { font-size: 14px; }
+  .vacio__texto { font-size: 11.5px; }
 }
 </style>

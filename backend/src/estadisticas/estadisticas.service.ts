@@ -22,15 +22,15 @@ import { ResumenQueryDto } from './dto/resumen-query.dto';
  *     llega a crear una, por eso existe el bloque aparte `colaDocumentos`.
  *  3. "Exportadas" = facturas cuyo `Periodo.estado` es EXPORTADO; no hay marca
  *     de exportación por factura.
- *  4. El embudo no está estrictamente anidado: `marcarRevisada` no exige
- *     cliente, así que `revisadas` puede superar a `clasificadas`.
+ *  4. El embudo no está estrictamente anidado: `confirmarClasificacionLote`
+ *     no exige cliente, así que `confirmadas` puede superar a `clasificadas`.
  */
 
 export interface Totales {
   escaneadas: number;
   clasificadas: number;
   sinClasificar: number;
-  revisadas: number;
+  confirmadas: number;
   exportadas: number;
   conErrorValidacion: number;
   /** Decimal serializado como string: nunca se pasa dinero por un float de JS. */
@@ -45,7 +45,7 @@ export interface TotalesMes extends Totales {
 export interface TotalesFormato {
   formato: FormatoDgii;
   escaneadas: number;
-  revisadas: number;
+  confirmadas: number;
   conErrorValidacion: number;
   montoFacturado: string;
   itbisFacturado: string;
@@ -57,7 +57,7 @@ export interface RollupCliente {
   nombre: string;
   rnc: string;
   escaneadas: number;
-  revisadas: number;
+  confirmadas: number;
   conErrorValidacion: number;
   montoFacturado: string;
   itbisFacturado: string;
@@ -78,17 +78,17 @@ export interface ColaDocumentos {
 }
 
 /** Forma de una fila del groupBy principal, para poder totalizar sin arrastrar genéricos de Prisma. */
-interface FilaGrupo {
+export interface FilaGrupo {
   clienteId: string | null;
   formato: FormatoDgii | null;
-  revisada: boolean;
+  clasificacionConfirmada: boolean;
   _count: { _all: number };
   _sum: { montoFacturado: Prisma.Decimal | null; itbisFacturado: Prisma.Decimal | null };
 }
 
 interface Acumulado {
   escaneadas: number;
-  revisadas: number;
+  confirmadas: number;
   montoFacturado: Decimal;
   itbisFacturado: Decimal;
 }
@@ -100,7 +100,7 @@ interface Acumulado {
  */
 function argsGrupo(where: Prisma.FacturaWhereInput) {
   return {
-    by: ['clienteId', 'formato', 'revisada'] as Prisma.FacturaScalarFieldEnum[],
+    by: ['clienteId', 'formato', 'clasificacionConfirmada'] as Prisma.FacturaScalarFieldEnum[],
     where,
     _count: { _all: true },
     _sum: { montoFacturado: true, itbisFacturado: true },
@@ -125,13 +125,13 @@ function mesAnteriorDe(yyyymm: string): string {
 }
 
 function nuevoAcumulado(): Acumulado {
-  return { escaneadas: 0, revisadas: 0, montoFacturado: new Decimal(0), itbisFacturado: new Decimal(0) };
+  return { escaneadas: 0, confirmadas: 0, montoFacturado: new Decimal(0), itbisFacturado: new Decimal(0) };
 }
 
 /** `_sum` devuelve null cuando el conjunto está vacío — se coerce a 0, no a NaN. */
 function sumarEn(acumulado: Acumulado, fila: FilaGrupo): void {
   acumulado.escaneadas += fila._count._all;
-  if (fila.revisada) acumulado.revisadas += fila._count._all;
+  if (fila.clasificacionConfirmada) acumulado.confirmadas += fila._count._all;
   acumulado.montoFacturado = acumulado.montoFacturado.plus(fila._sum.montoFacturado?.toString() ?? '0');
   acumulado.itbisFacturado = acumulado.itbisFacturado.plus(fila._sum.itbisFacturado?.toString() ?? '0');
 }
@@ -142,7 +142,7 @@ function acumularEn(mapa: Map<string, Acumulado>, clave: string, fila: FilaGrupo
   mapa.set(clave, acumulado);
 }
 
-function totalizar(grupos: FilaGrupo[], exportadas: number, conErrorValidacion: number): Totales {
+export function totalizar(grupos: FilaGrupo[], exportadas: number, conErrorValidacion: number): Totales {
   const total = nuevoAcumulado();
   let clasificadas = 0;
   for (const fila of grupos) {
@@ -153,7 +153,7 @@ function totalizar(grupos: FilaGrupo[], exportadas: number, conErrorValidacion: 
     escaneadas: total.escaneadas,
     clasificadas,
     sinClasificar: total.escaneadas - clasificadas,
-    revisadas: total.revisadas,
+    confirmadas: total.confirmadas,
     exportadas,
     conErrorValidacion,
     montoFacturado: total.montoFacturado.toFixed(2),
@@ -345,7 +345,7 @@ export class EstadisticasService {
           return {
             formato,
             escaneadas: acumulado.escaneadas,
-            revisadas: acumulado.revisadas,
+            confirmadas: acumulado.confirmadas,
             conErrorValidacion: erroresClienteFormato.get(clave) ?? 0,
             montoFacturado: acumulado.montoFacturado.toFixed(2),
             itbisFacturado: acumulado.itbisFacturado.toFixed(2),
@@ -358,7 +358,7 @@ export class EstadisticasService {
         nombre: cliente.nombre,
         rnc: cliente.rnc,
         escaneadas: total.escaneadas,
-        revisadas: total.revisadas,
+        confirmadas: total.confirmadas,
         conErrorValidacion: erroresCliente.get(cliente.id) ?? 0,
         montoFacturado: total.montoFacturado.toFixed(2),
         itbisFacturado: total.itbisFacturado.toFixed(2),
