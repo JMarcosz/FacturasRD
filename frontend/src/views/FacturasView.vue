@@ -839,13 +839,19 @@ function detallePendiente(p: Documento): string {
 
 // ── Celdas ───────────────────────────────────────────────────────────────────
 function textoClasificacion(f: Factura): string {
-  if (!f.formato) return "Sin clasificar";
-  return f.formato === "F607" ? "INGRESO" : "GASTO";
+  if (f.clasificacionOperacion === "COSTO") return "COSTO";
+  if (f.clasificacionOperacion === "GASTO") return "GASTO";
+  if (f.clasificacionOperacion === "INGRESO" || f.formato === "F607") return "INGRESO";
+  if (f.formato === "F606") return "GASTO";
+  return "Sin clasificar";
 }
 
-function tonoClasificacion(f: Factura): "ok" | "neutro" | "alerta" {
-  if (!f.formato) return "alerta";
-  return f.formato === "F607" ? "ok" : "neutro";
+function tonoClasificacion(f: Factura): "ok" | "indigo" | "neutro" | "alerta" {
+  if (f.clasificacionOperacion === "COSTO") return "indigo";
+  if (f.clasificacionOperacion === "GASTO") return "neutro";
+  if (f.clasificacionOperacion === "INGRESO" || f.formato === "F607") return "ok";
+  if (f.formato === "F606") return "neutro";
+  return "alerta";
 }
 
 function textoTipoGasto(f: Factura): string {

@@ -267,8 +267,7 @@ export function derivarFactura606(
     });
   }
 
-  let formaPago: string | null = clasificarFormaPago606(hechos);
-  if (!formaPago && esNotaCredito(ncf)) formaPago = '06';
+  let formaPago: string | null = esNotaCredito(ncf) ? '06' : clasificarFormaPago606(hechos);
   if (!formaPago) {
     avisos.push({
       campo: 'formaPago',

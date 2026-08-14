@@ -13,6 +13,7 @@ export interface ResultadoCostoGasto {
 
 export interface ResultadoIngreso {
   tipoIngreso: string; // '01'..'06'
+  formaPago: string; // '01'..'07'
   confianza: number;
   justificacion: string;
 }
@@ -65,7 +66,8 @@ Analiza la siguiente venta / factura de ingreso emitida al cliente: "${nombreRec
 Conceptos / Artículos vendidos: "${descripciones || 'Sin desglose de líneas'}".
 Monto total: ${montoTotal || 'No especificado'}.
 
-Determina el "tipoIngreso" según el catálogo oficial de la DGII:
+Determina:
+1. "tipoIngreso" según el catálogo oficial de la DGII:
 - "01": Ingresos por Operaciones (Venta de productos, mercancías o servicios habituales de la actividad económica principal).
 - "02": Ingresos Financieros (Intereses, rendimientos, comisiones financieras a favor).
 - "03": Ingresos Extraordinarios (Ganancias fortuitas, indemnizaciones de seguros, subsidios).
@@ -73,9 +75,22 @@ Determina el "tipoIngreso" según el catálogo oficial de la DGII:
 - "05": Ingresos por Venta de Activo Depreciable (Venta de maquinaria, mobiliario o vehículos usados de la empresa).
 - "06": Otros Ingresos.
 
+2. "formaPago" (Catálogo DGII 607 / 606):
+01 = Efectivo
+02 = Cheque / Transferencia
+03 = Tarjeta de Crédito / Débito
+04 = A Crédito
+05 = Permuta
+06 = Notas de Crédito
+07 = Mixta
+
+REGLA CRÍTICA PARA FORMA DE PAGO:
+Si la factura no especifica claramente la forma de pago (efectivo, tarjeta, transferencia), ASUME SIEMPRE que es una venta "A Crédito" y asigna "formaPago": "04".
+
 Devuelve ÚNICAMENTE un objeto JSON estrictamente válido:
 {
   "tipoIngreso": "01" | "02" | "03" | "04" | "05" | "06",
+  "formaPago": "01" | "02" | "03" | "04" | "05" | "06" | "07",
   "confianza": number (entre 0.0 y 1.0),
   "justificacion": string (explicación breve de 1 oración en español)
 }`;
@@ -116,10 +131,11 @@ Devuelve ÚNICAMENTE un objeto JSON estrictamente válido:
       }
 
       const tipoIngresoValido = ['01', '02', '03', '04', '05', '06'].includes(parsed.tipoIngreso) ? parsed.tipoIngreso : '01';
+      const formaPagoValida = ['01', '02', '03', '04', '05', '06', '07'].includes(parsed.formaPago) ? parsed.formaPago : '04';
       const confianza = typeof parsed.confianza === 'number' ? Math.max(0, Math.min(1, parsed.confianza)) : 0.9;
       const justificacion = parsed.justificacion || 'Ingresos ordinarios por operaciones comerciales.';
 
-      return { tipoIngreso: tipoIngresoValido, confianza, justificacion };
+      return { tipoIngreso: tipoIngresoValido, formaPago: formaPagoValida, confianza, justificacion };
     } catch (err: any) {
       this.logger.warn(`Fallo al clasificar Tipo de Ingreso con IA: ${err.message}. Usando fallback.`);
       return this.fallbackIngreso(descripciones);
@@ -174,6 +190,9 @@ Determina:
    - "05": Permuta
    - "06": Nota de Crédito
    - "07": Mixto
+
+REGLA CRÍTICA PARA FORMA DE PAGO:
+Si la factura no especifica claramente la forma de pago (efectivo, tarjeta, transferencia), ASUME SIEMPRE que es una adquisición "A Crédito" y asigna "formaPago": "04".
 
 Devuelve ÚNICAMENTE un objeto JSON estrictamente válido:
 {
@@ -248,21 +267,22 @@ Devuelve ÚNICAMENTE un objeto JSON estrictamente válido:
 
   private deducirFormaPago(textoImpreso?: string | null): string {
     const t = (textoImpreso || '').toLowerCase();
+    if (t.includes('efectivo') || t.includes('cash')) return '01';
     if (t.includes('tarjeta') || t.includes('card') || t.includes('visa') || t.includes('mastercard')) return '03';
     if (t.includes('transferencia') || t.includes('cheque') || t.includes('deposito') || t.includes('depósito')) return '02';
     if (t.includes('credito') || t.includes('crédito') || t.includes('dias') || t.includes('días')) return '04';
-    return '01'; // Efectivo por defecto
+    return '04'; // A Crédito por defecto cuando no se especifica
   }
 
   private fallbackIngreso(descripciones?: string): ResultadoIngreso {
     const t = (descripciones || '').toLowerCase();
     if (t.includes('alquiler') || t.includes('arrendamiento') || t.includes('renta')) {
-      return { tipoIngreso: '04', confianza: 0.85, justificacion: 'Ingreso por arrendamiento deducido por descripción.' };
+      return { tipoIngreso: '04', formaPago: '04', confianza: 0.85, justificacion: 'Ingreso por arrendamiento deducido por descripción.' };
     }
     if (t.includes('interes') || t.includes('interés') || t.includes('rendimiento') || t.includes('financiero')) {
-      return { tipoIngreso: '02', confianza: 0.85, justificacion: 'Ingreso financiero deducido por descripción.' };
+      return { tipoIngreso: '02', formaPago: '04', confianza: 0.85, justificacion: 'Ingreso financiero deducido por descripción.' };
     }
-    return { tipoIngreso: '01', confianza: 0.9, justificacion: 'Ingresos por operaciones comerciales ordinarias.' };
+    return { tipoIngreso: '01', formaPago: '04', confianza: 0.9, justificacion: 'Ingresos por operaciones comerciales ordinarias.' };
   }
 
   private clasificacionFallback(

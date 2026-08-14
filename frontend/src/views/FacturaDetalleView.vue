@@ -259,12 +259,45 @@ function cargarDesdeFactura(f: Factura) {
   form.montoOtrasFormas = Number(f.montoOtrasFormas ?? 0);
 }
 
+const OPCIONES_TIPO_BIENES_SERVICIOS_606 = [
+  { codigo: "01", descripcion: "01 - Gastos de personal", tipo: "GASTO" },
+  { codigo: "02", descripcion: "02 - Gastos por trabajos, suministros y servicios", tipo: "GASTO" },
+  { codigo: "03", descripcion: "03 - Arrendamientos", tipo: "GASTO" },
+  { codigo: "04", descripcion: "04 - Gastos de activos fijos", tipo: "GASTO" },
+  { codigo: "05", descripcion: "05 - Gastos de representación", tipo: "GASTO" },
+  { codigo: "06", descripcion: "06 - Otras deducciones admitidas", tipo: "GASTO" },
+  { codigo: "07", descripcion: "07 - Gastos financieros", tipo: "GASTO" },
+  { codigo: "08", descripcion: "08 - Gastos extraordinarios", tipo: "GASTO" },
+  { codigo: "09", descripcion: "09 - Compras que formarán parte del costo de venta", tipo: "COSTO" },
+  { codigo: "10", descripcion: "10 - Adquisiciones de activos", tipo: "COSTO" },
+  { codigo: "11", descripcion: "11 - Seguros", tipo: "GASTO" },
+];
+
+const opcionesTipoBienesServiciosFiltradas = computed(() => {
+  const modo = form.clasificacionOperacion;
+  if (modo === "COSTO") {
+    return OPCIONES_TIPO_BIENES_SERVICIOS_606.filter((o) => o.tipo === "COSTO");
+  }
+  if (modo === "GASTO") {
+    return OPCIONES_TIPO_BIENES_SERVICIOS_606.filter((o) => o.tipo === "GASTO");
+  }
+  return catalogos.catalogos.tiposBienesServicios606;
+});
+
 function seleccionarClasificacion(op: "INGRESO" | "COSTO" | "GASTO") {
   form.clasificacionOperacion = op;
   if (op === "INGRESO") {
     if (!form.tipoIngreso) form.tipoIngreso = "01";
-  } else {
+  } else if (op === "COSTO") {
     form.tipoIngreso = "";
+    if (form.tipoBienesServicios !== "09" && form.tipoBienesServicios !== "10") {
+      form.tipoBienesServicios = "09";
+    }
+  } else if (op === "GASTO") {
+    form.tipoIngreso = "";
+    if (form.tipoBienesServicios === "09") {
+      form.tipoBienesServicios = "02";
+    }
   }
 }
 
@@ -1102,7 +1135,7 @@ onUnmounted(() => {
                         <Select
                           v-model="form.tipoBienesServicios"
                           input-id="f-tipoBienesServicios"
-                          :options="catalogos.catalogos.tiposBienesServicios606"
+                          :options="opcionesTipoBienesServiciosFiltradas"
                           option-label="descripcion"
                           option-value="codigo"
                           placeholder="— Selecciona el tipo de costo o gasto —"

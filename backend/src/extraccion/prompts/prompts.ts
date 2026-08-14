@@ -130,6 +130,18 @@ Códigos Tipo de Bienes y Servicios DGII:
 10 = Adquisiciones de activos (laptops, servidores, maquinaria, vehículos nuevos)
 11 = Seguros
 
+Forma de Pago / Venta DGII:
+01 = Efectivo
+02 = Cheque / Transferencia / Depósito
+03 = Tarjeta de Crédito / Débito
+04 = A Crédito
+05 = Permuta
+06 = Notas de Crédito
+07 = Mixto
+
+REGLA CRÍTICA PARA FORMA DE PAGO:
+Si la factura no especifica claramente la forma de pago (efectivo, tarjeta, transferencia), ASUME SIEMPRE que es una adquisición "A Crédito" y asigna "formaPago": "04".
+
 Reglas:
 - Mercancía para reventa, materia prima o insumos productivos → clasificacion: "COSTO", tipoBienesServicios: "09".
 - Servicios operativos, suministros, luz, teléfono, agua → clasificacion: "GASTO", tipoBienesServicios: "02".
@@ -160,9 +172,22 @@ Determina el tipo de ingreso según la naturaleza REAL del bien o servicio vendi
 05 = Ingresos por venta de activo depreciable
 06 = Otros ingresos
 
+Forma de Pago / Venta DGII:
+01 = Efectivo
+02 = Cheque / Transferencia
+03 = Tarjeta de Crédito / Débito
+04 = A Crédito
+05 = Permuta
+06 = Notas de Crédito
+07 = Mixta
+
+REGLA CRÍTICA PARA FORMA DE PAGO:
+Si la factura no especifica claramente la forma de pago (efectivo, tarjeta, transferencia), ASUME SIEMPRE que es una venta "A Crédito" y asigna "formaPago": "04".
+
 Devuelve ÚNICAMENTE un JSON con:
 {
   "tipoIngreso": "01" | "02" | "03" | "04" | "05" | "06",
+  "formaPago": "01" | "02" | "03" | "04" | "05" | "06" | "07",
   "confianza": number (entre 0.0 y 1.0),
   "justificacion": string,
   "requiereRevision": boolean

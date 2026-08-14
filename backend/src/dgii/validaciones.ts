@@ -99,15 +99,30 @@ export function validarFactura607(f: Factura607ParaValidar, contexto: ContextoVa
     resultados.push(err('CLASIFICACION_FALTANTE', 'tipoIngreso', 'Falta asignar el Tipo de Ingreso.'));
   }
 
-  const esperadoItbis = f.montoFacturado.times(contexto.tasaItbis);
-  if (f.itbisFacturado.minus(esperadoItbis).abs().gt(TOLERANCIA_CENTAVOS)) {
-    resultados.push(
-      warn(
-        'ITBIS_INCONSISTENTE',
-        'itbisFacturado',
-        `ITBIS facturado (${f.itbisFacturado.toFixed(2)}) no cuadra con el ${contexto.tasaItbis.times(100).toFixed(0)}% de ${f.montoFacturado.toFixed(2)}.`,
-      ),
-    );
+  const emisoresServiciosExentos = new Set([
+    '101797931', // EDEESTE
+    '101618787', // EDESUR
+    '101788223', // EDENORTE
+    '101780000', // CEPM
+    '401007455', // CAASD
+    '402000454', // CORAASAN
+    '401007463', // INAPA
+  ]);
+
+  const esNotaCredito607 = esNotaCredito(f.ncf || '');
+  const tieneItbisCero607 = f.itbisFacturado.isZero();
+
+  if (!(tieneItbisCero607 && esNotaCredito607)) {
+    const esperadoItbis = f.montoFacturado.times(contexto.tasaItbis);
+    if (f.itbisFacturado.minus(esperadoItbis).abs().gt(TOLERANCIA_CENTAVOS)) {
+      resultados.push(
+        warn(
+          'ITBIS_INCONSISTENTE',
+          'itbisFacturado',
+          `ITBIS facturado (${f.itbisFacturado.toFixed(2)}) no cuadra con el ${contexto.tasaItbis.times(100).toFixed(0)}% de ${f.montoFacturado.toFixed(2)}.`,
+        ),
+      );
+    }
   }
 
   const distribucion = f.montoEfectivo
@@ -145,15 +160,31 @@ export function validarFactura606(f: Factura606ParaValidar, contexto: ContextoVa
     resultados.push(err('CLASIFICACION_FALTANTE', 'formaPago', 'Falta asignar la Forma de Pago.'));
   }
 
-  const esperadoItbis = f.montoFacturado.times(contexto.tasaItbis);
-  if (f.itbisFacturado.minus(esperadoItbis).abs().gt(TOLERANCIA_CENTAVOS)) {
-    resultados.push(
-      warn(
-        'ITBIS_INCONSISTENTE',
-        'itbisFacturado',
-        `ITBIS facturado (${f.itbisFacturado.toFixed(2)}) no cuadra con el ${contexto.tasaItbis.times(100).toFixed(0)}% de ${f.montoFacturado.toFixed(2)}.`,
-      ),
-    );
+  const emisoresServiciosExentos = new Set([
+    '101797931', // EDEESTE
+    '101618787', // EDESUR
+    '101788223', // EDENORTE
+    '101780000', // CEPM
+    '401007455', // CAASD
+    '402000454', // CORAASAN
+    '401007463', // INAPA
+  ]);
+
+  const esNotaCredito606 = esNotaCredito(f.ncf || '');
+  const esServicioExento606 = emisoresServiciosExentos.has(f.rncCedula);
+  const tieneItbisCero606 = f.itbisFacturado.isZero();
+
+  if (!(tieneItbisCero606 && (esNotaCredito606 || esServicioExento606))) {
+    const esperadoItbis = f.montoFacturado.times(contexto.tasaItbis);
+    if (f.itbisFacturado.minus(esperadoItbis).abs().gt(TOLERANCIA_CENTAVOS)) {
+      resultados.push(
+        warn(
+          'ITBIS_INCONSISTENTE',
+          'itbisFacturado',
+          `ITBIS facturado (${f.itbisFacturado.toFixed(2)}) no cuadra con el ${contexto.tasaItbis.times(100).toFixed(0)}% de ${f.montoFacturado.toFixed(2)}.`,
+        ),
+      );
+    }
   }
 
   if (f.montoServicios.plus(f.montoBienes).minus(f.montoFacturado).abs().gt(TOLERANCIA_CENTAVOS)) {
