@@ -2428,17 +2428,26 @@ onUnmounted(() => {
   }
   .filtros {
     gap: 8px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 8px;
+  }
+  .filtros::-webkit-scrollbar {
+    display: none;
   }
   .filtros > button.accion-lote {
     display: none; /* En móvil se accionan desde la barra flotante */
   }
   .buscador {
-    width: 100%;
-    min-width: 0;
+    width: auto;
+    min-width: 220px; /* Asegurar que no se aplaste pero pueda scrollear */
+    flex: none;
   }
   .filtro {
     padding: 6px 9px;
     font-size: 12px;
+    flex: none; /* Evitar que se encojan en el scroll horizontal */
   }
   .vistas {
     overflow-x: auto;
@@ -2448,6 +2457,28 @@ onUnmounted(() => {
   }
   .vistas::-webkit-scrollbar {
     display: none;
+  }
+  
+  /* Rediseño de barra flotante a Bottom Sheet Grid en móvil */
+  .barra-acciones-flotante__conteo {
+    display: none; /* Ahorrar espacio, el número seleccionado se puede inferir */
+  }
+  .barra-acciones-flotante__botones {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+  .btn-flotante {
+    flex-direction: column;
+    padding: 8px 4px;
+    font-size: 10px;
+    text-align: center;
+    border-radius: 12px;
+  }
+  .btn-flotante i {
+    font-size: 16px;
+    margin-bottom: 4px;
   }
 }
 

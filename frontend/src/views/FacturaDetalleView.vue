@@ -2181,13 +2181,12 @@ onUnmounted(() => {
    entre el documento y el formulario, así que `.cuerpo` y sus paneles vuelven
    al flujo normal (alto por contenido, scroll de página). El visor ya lo
    sabe por su cuenta: ver `anchoAngosto`, que en este ancho apaga `llenar`. */
-/* ── Selector Segmentado Móvil ── */
+/* ── Selector Segmentado Móvil (Segmented Control iOS style) ── */
 .selector-vista-movil {
   display: none;
-  background: var(--superficie);
+  background: var(--superficie-tenue);
   border-bottom: 1px solid var(--borde);
-  padding: 6px 12px;
-  gap: 8px;
+  padding: 8px 12px;
   position: sticky;
   top: 0;
   z-index: 15;
@@ -2199,25 +2198,36 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--borde);
-  background: var(--superficie-tenue);
+  padding: 8px 0;
+  border-radius: 7px;
+  border: 0;
+  background: transparent;
   color: var(--texto-suave);
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
-  transition: all 0.15s ease;
+  transition: all 0.2s ease;
 }
 
 .selector-vista-movil__btn--activo {
-  background: var(--teal-suave) !important;
-  color: var(--teal) !important;
-  border-color: var(--teal-borde) !important;
+  background: #ffffff !important;
+  color: var(--texto) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06) !important;
 }
 
 @media (max-width: 1200px) {
+  .selector-vista-movil {
+    display: flex;
+    background: #eef0f3;
+    padding: 3px;
+    margin: 10px 12px;
+    border-radius: 9px;
+    border-bottom: none;
+    position: relative; /* Quitar sticky en 1200px si preferimos que scrollee con la página */
+    top: auto;
+  }
+
   .cuerpo {
     grid-template-columns: 1fr;
     flex: none;

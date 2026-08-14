@@ -806,10 +806,16 @@ defineExpose({ refrescarResumen: cargarResumen });
     height: auto;
     flex-wrap: wrap;
     padding: 10px 14px;
+    gap: 8px;
+  }
+  .miga__actual {
+    display: none; /* Ahorrar espacio en topbar móvil */
   }
   .buscador {
     width: 100%;
     order: 3;
+    flex: 1;
+    min-width: 0;
   }
   .principal {
     padding: 12px;
