@@ -64,7 +64,7 @@ export class GeminiExtractorService implements IInvoiceExtractor {
     const apiKey = this.config.getOrThrow<string>('GEMINI_API_KEY');
     this.client = new GoogleGenAI({ apiKey });
     // Verificar el ID vigente en https://aistudio.google.com/ antes de cambiarlo.
-    this.modelo = this.config.get<string>('GEMINI_MODEL', 'gemini-3.5-flash-lite');
+    this.modelo = this.config.get<string>('GEMINI_MODEL', 'gemini-2.5-flash');
     const minIntervaloMs = Number(this.config.get('GEMINI_MIN_INTERVALO_MS', 4000));
     this.limitador = new LimitadorTasa(minIntervaloMs);
   }

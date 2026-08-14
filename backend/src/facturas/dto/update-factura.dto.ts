@@ -1,4 +1,5 @@
-import { IsBoolean, IsISO8601, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEnum, IsISO8601, IsNumber, IsOptional, IsString } from 'class-validator';
+import { ClasificacionOperacion } from '@prisma/client';
 
 export class UpdateFacturaDto {
   @IsOptional() @IsString() tipoIdentificacion?: string;
@@ -10,6 +11,8 @@ export class UpdateFacturaDto {
 
   @IsOptional() @IsString() ncf?: string;
   @IsOptional() @IsString() ncfModificado?: string | null;
+  @IsOptional() @IsString() tipoNcfCodigo?: string | null;
+  @IsOptional() @IsEnum(ClasificacionOperacion) clasificacionOperacion?: ClasificacionOperacion;
   @IsOptional() @IsISO8601() fechaComprobante?: string;
   @IsOptional() @IsISO8601() fechaRetencionOPago?: string | null;
 

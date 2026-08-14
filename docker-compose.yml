@@ -33,7 +33,7 @@ services:
       # "docker compose exec app ..." — por eso va aquí y no en el arranque.
       # Si cambias POSTGRES_USER/PASSWORD/DB en backend/.env, actualiza esta
       # línea también.
-      DATABASE_URL: postgresql://facturas:12345678@db:5432/facturas?schema=public
+      DATABASE_URL: postgresql://${POSTGRES_USER:-facturas}:${POSTGRES_PASSWORD:-12345678}@db:5432/${POSTGRES_DB:-facturas}?schema=public
       UPLOAD_DIR: /data/uploads
       PORT: 3000
     ports:

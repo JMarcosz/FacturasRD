@@ -182,11 +182,11 @@ function recuperar() {
   display: grid;
   place-items: center;
   font-size: 14px;
-  font-weight: 800;
+  font-weight: 600;
 }
 .marca__nombre {
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
 }
 .titulos {
   display: flex;
@@ -195,7 +195,7 @@ function recuperar() {
 }
 .titulos__principal {
   font-size: 21px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.4px;
 }
 .titulos__sub {
@@ -214,14 +214,14 @@ function recuperar() {
 }
 .campo label {
   font-size: 11.5px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--texto-suave);
 }
 .entrar {
   width: 100%;
   padding: 12px;
   font-size: 13.5px;
-  font-weight: 700;
+  font-weight: 600;
 }
 .pie {
   font-size: 11.5px;
@@ -234,7 +234,7 @@ function recuperar() {
   padding: 0;
   font: inherit;
   color: var(--teal);
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
 }
 .pie__enlace:hover {
@@ -275,7 +275,7 @@ function recuperar() {
 }
 .ventaja__titulo {
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: 600;
 }
 .ventaja__detalle {
   font-size: 11.5px;

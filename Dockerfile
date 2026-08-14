@@ -24,6 +24,7 @@ FROM node:24-alpine AS runtime
 RUN apk add --no-cache openssl
 WORKDIR /app/backend
 ENV NODE_ENV=production
+ENV PATH="/app/backend/node_modules/.bin:${PATH}"
 
 COPY --from=backend-build /app/backend/node_modules ./node_modules
 COPY --from=backend-build /app/backend/dist ./dist
@@ -33,4 +34,4 @@ COPY --from=backend-build /app/backend/tsconfig.json ./tsconfig.json
 COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
 
 EXPOSE 3000
-CMD sh -c "node_modules/.bin/prisma migrate deploy && node dist/main.js"
+CMD sh -c "node_modules/.bin/prisma migrate deploy && node_modules/.bin/prisma db seed && node dist/main.js"

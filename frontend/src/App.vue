@@ -53,7 +53,7 @@ function irAccion(accion: AccionToast) {
   gap: 4px;
 }
 .toast-resumen {
-  font-weight: 700;
+  font-weight: 600;
 }
 .toast-detalle {
   font-size: 12.5px;
@@ -72,7 +72,7 @@ function irAccion(accion: AccionToast) {
   color: inherit;
   font-family: inherit;
   font-size: 11.5px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
 }
 .toast-accion:hover {

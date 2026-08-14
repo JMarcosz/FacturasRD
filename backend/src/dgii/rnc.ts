@@ -106,3 +106,58 @@ export function limpiarIdentificacion(valor: string | null | undefined): string 
     .toUpperCase()
     .replace(/[^0-9A-Z]/g, '');
 }
+
+/**
+ * Normaliza nombres comerciales para comparación insensible a signos de puntuación,
+ * tildes, tipos societarios y espacios múltiples:
+ * - Elimina tildes (NFD)
+ * - Convierte a mayúsculas
+ * - Elimina signos de puntuación (, . ; : - _ / \ ' " ( ) [ ] { })
+ * - Normaliza sufijos societarios comunes en RD:
+ *   "S R L", "S.R.L.", "SRL" -> "SRL"
+ *   "S A S", "S.A.S.", "SAS" -> "SAS"
+ *   "S A", "S.A.", "SA" -> "SA"
+ *   "E I R L", "E.I.R.L.", "EIRL" -> "EIRL"
+ *   "C POR A", "C. POR A.", "CXA" -> "CXA"
+ * - Colapsa espacios múltiples a un solo espacio
+ */
+export function normalizarNombreComercio(valor: string | null | undefined): string {
+  if (!valor) return '';
+  let str = valor
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // Quitar tildes
+    .toUpperCase();
+
+  // Reemplazar signos de puntuación por espacios
+  str = str.replace(/[.,;:_\-\/\\'"\(\)\[\]\{\}]/g, ' ');
+
+  // Normalizar siglas societarias comunes en RD
+  str = str
+    .replace(/\bS\s+R\s+L\b/g, 'SRL')
+    .replace(/\bS\s+A\s+S\b/g, 'SAS')
+    .replace(/\bS\s+A\b/g, 'SA')
+    .replace(/\bE\s+I\s+R\s+L\b/g, 'EIRL')
+    .replace(/\bC\s+POR\s+A\b/g, 'CXA')
+    .replace(/\bC\s+X\s+A\b/g, 'CXA');
+
+  // Colapsar espacios y recortar
+  return str.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Comprueba si dos nombres comerciales corresponden a la misma entidad.
+ */
+export function sonNombresComercialesEquivalentes(a: string | null | undefined, b: string | null | undefined): boolean {
+  const normA = normalizarNombreComercio(a);
+  const normB = normalizarNombreComercio(b);
+  if (!normA || !normB) return false;
+  if (normA === normB) return true;
+
+  // Si uno está contenido en el otro con suficiente longitud (ej: "SUPLIDORA MARCOR" vs "SUPLIDORA MARCOR SRL")
+  const minLen = Math.min(normA.length, normB.length);
+  if (minLen >= 8) {
+    if (normA.startsWith(normB) || normB.startsWith(normA)) return true;
+  }
+
+  return false;
+}

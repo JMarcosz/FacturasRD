@@ -136,7 +136,7 @@ function identificacionDeclaradaDe(f: {
 .bloque h4 {
   margin: 0;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--texto-debil);
@@ -153,7 +153,7 @@ function identificacionDeclaradaDe(f: {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--texto-debil);
-  font-weight: 700;
+  font-weight: 600;
   border-bottom: 1px solid var(--borde-tenue);
   background: var(--superficie-tenue);
 }

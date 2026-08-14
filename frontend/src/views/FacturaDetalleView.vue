@@ -1,36 +1,37 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
-import Button from 'primevue/button';
-import DatePicker from 'primevue/datepicker';
-import Drawer from 'primevue/drawer';
-import InputNumber from 'primevue/inputnumber';
-import InputText from 'primevue/inputtext';
-import Menu from 'primevue/menu';
-import Select from 'primevue/select';
-import Tabs from 'primevue/tabs';
-import TabList from 'primevue/tablist';
-import Tab from 'primevue/tab';
-import TabPanels from 'primevue/tabpanels';
-import TabPanel from 'primevue/tabpanel';
-import { useConfirm } from 'primevue/useconfirm';
-import { useToast } from 'primevue/usetoast';
-import AppLayout from '../components/AppLayout.vue';
-import VisorDocumento from '../components/VisorDocumento.vue';
-import PanelDiagnostico from '../components/PanelDiagnostico.vue';
-import Pastilla from '../components/ui/Pastilla.vue';
-import TarjetaPanel from '../components/ui/TarjetaPanel.vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { useRouter } from "vue-router";
+import Button from "primevue/button";
+import DatePicker from "primevue/datepicker";
+import Dialog from "primevue/dialog";
+import Drawer from "primevue/drawer";
+import InputNumber from "primevue/inputnumber";
+import InputText from "primevue/inputtext";
+import Menu from "primevue/menu";
+import Select from "primevue/select";
+import Tabs from "primevue/tabs";
+import TabList from "primevue/tablist";
+import Tab from "primevue/tab";
+import TabPanels from "primevue/tabpanels";
+import TabPanel from "primevue/tabpanel";
+import { useConfirm } from "primevue/useconfirm";
+import { useToast } from "primevue/usetoast";
+import AppLayout from "../components/AppLayout.vue";
+import VisorDocumento from "../components/VisorDocumento.vue";
+import PanelDiagnostico from "../components/PanelDiagnostico.vue";
+import Pastilla from "../components/ui/Pastilla.vue";
+import TarjetaPanel from "../components/ui/TarjetaPanel.vue";
 import {
   actualizarFactura,
   clasificarFactura,
   confirmarClasificacionLote,
   eliminarFactura,
   obtenerFactura,
-} from '../api/facturas';
-import { listarClientes } from '../api/clientes';
-import { useCatalogosStore } from '../stores/catalogos';
-import { fmtFechaCorta, fmtMonto } from '../formato';
-import type { Cliente, Factura, Formato } from '../types';
+} from "../api/facturas";
+import { crearCliente, listarClientes } from "../api/clientes";
+import { useCatalogosStore } from "../stores/catalogos";
+import { fmtFechaCorta, fmtMonto } from "../formato";
+import type { Cliente, Factura, Formato, ClasificacionOperacion } from "../types";
 
 const props = defineProps<{ facturaId: string }>();
 
@@ -47,56 +48,158 @@ const verOcr = ref(false);
 const visorRef = ref<InstanceType<typeof VisorDocumento> | null>(null);
 const menuHerramientas = ref<InstanceType<typeof Menu> | null>(null);
 const itemsHerramientas = [
-  { label: 'Rotar', icon: 'pi pi-refresh', command: () => visorRef.value?.rotar() },
-  { label: 'Abrir en otra pestaña', icon: 'pi pi-external-link', command: () => visorRef.value?.abrirAparte() },
+  {
+    label: "Rotar",
+    icon: "pi pi-refresh",
+    command: () => visorRef.value?.rotar(),
+  },
+  {
+    label: "Abrir en otra pestaña",
+    icon: "pi pi-external-link",
+    command: () => visorRef.value?.abrirAparte(),
+  },
 ];
 
-// El formato lo trae la propia factura una vez clasificada; mientras no lo
-// esté, se muestra el bloque de clasificación en vez de los campos de 606/607.
-const formato = computed<Formato | null>(() => factura.value?.formato ?? null);
+// El formato se deriva del modo de operación contable
+const formato = computed<Formato | null>(() => {
+  if (form.clasificacionOperacion === "INGRESO") return "F607";
+  if (form.clasificacionOperacion === "COSTO" || form.clasificacionOperacion === "GASTO") return "F606";
+  return factura.value?.formato ?? null;
+});
 
-/**
- * Qué lado de `form` es "lo declarado" para el formato actual — 606 (compra)
- * declara al emisor (el proveedor), 607 (venta) declara al receptor (el
- * comprador). `null` antes de clasificar: todavía no hay lado que decidir.
- * No es un campo propio (la factura ya no guarda `rncCedula`): son
- * identificacionEmisor/identificacionReceptor vistos desde el ángulo que a
- * la DGII le importa, no un tercer dato guardado aparte.
- */
-const campoIdentificacionDeclarada = computed<'identificacionEmisor' | 'identificacionReceptor' | null>(() => {
-  if (formato.value === 'F607') return 'identificacionReceptor';
-  if (formato.value === 'F606') return 'identificacionEmisor';
+const campoIdentificacionDeclarada = computed<
+  "identificacionEmisor" | "identificacionReceptor" | null
+>(() => {
+  if (formato.value === "F607") return "identificacionReceptor";
+  if (formato.value === "F606") return "identificacionEmisor";
   return null;
 });
 
 const identificacionDeclarada = computed<string>({
-  get: () => (campoIdentificacionDeclarada.value ? form[campoIdentificacionDeclarada.value] : ''),
+  get: () =>
+    campoIdentificacionDeclarada.value
+      ? form[campoIdentificacionDeclarada.value]
+      : "",
   set: (valor) => {
-    if (campoIdentificacionDeclarada.value) form[campoIdentificacionDeclarada.value] = valor;
+    if (campoIdentificacionDeclarada.value)
+      form[campoIdentificacionDeclarada.value] = valor;
   },
 });
 
-const FORMATOS: Array<{ label: string; value: Formato }> = [
-  { label: '607 · Venta', value: 'F607' },
-  { label: '606 · Compra', value: 'F606' },
-];
-
-const clasificacion = reactive({ clienteId: '', formato: 'F607' as Formato });
+const clasificacion = reactive({
+  clienteId: "",
+  clasificacionOperacion: "INGRESO" as ClasificacionOperacion,
+});
 const clasificando = ref(false);
 
+// Modal de Alta Rápida de Cliente desde el detalle
+const modalCliente = ref(false);
+const guardandoClienteModal = ref(false);
+const nuevoCliente = reactive({
+  rnc: "",
+  nombre: "",
+  tipoIngresoDefault: "01",
+  rol: "EMISOR" as "EMISOR" | "RECEPTOR",
+});
+
+function abrirModalCliente(rol: "EMISOR" | "RECEPTOR") {
+  nuevoCliente.rol = rol;
+  nuevoCliente.rnc = rol === "EMISOR" ? form.identificacionEmisor : form.identificacionReceptor;
+  nuevoCliente.nombre = (rol === "EMISOR" ? form.nombreEmisor : form.nombreReceptor).trim().toUpperCase();
+  nuevoCliente.tipoIngresoDefault = "01";
+  modalCliente.value = true;
+}
+
+async function guardarClienteModal() {
+  if (!nuevoCliente.rnc || !nuevoCliente.nombre) {
+    toast.add({ severity: "error", summary: "RNC y Nombre requeridos", life: 3000 });
+    return;
+  }
+  guardandoClienteModal.value = true;
+  try {
+    const creado = await crearCliente({
+      rnc: nuevoCliente.rnc,
+      nombre: nuevoCliente.nombre.trim().toUpperCase(),
+      tipoIngresoDefault: nuevoCliente.tipoIngresoDefault || undefined,
+    });
+    modalCliente.value = false;
+    clientes.value = await listarClientes();
+    toast.add({
+      severity: "success",
+      summary: "Cliente creado",
+      detail: `${creado.nombre} agregado al maestro. Facturas reclasificadas automáticamente.`,
+      life: 4000,
+    });
+    await cargar();
+  } catch (e: any) {
+    toast.add({
+      severity: "error",
+      summary: "Error al crear cliente",
+      detail: e?.response?.data?.message ?? "Revisa los datos.",
+      life: 5000,
+    });
+  } finally {
+    guardandoClienteModal.value = false;
+  }
+}
+
+const pestanaActiva = ref("generales");
+
+function autoDistribuirFormaVenta(tipo: "CREDITO" | "EFECTIVO" | "TRANSFERENCIA" | "TARJETA") {
+  const total = (Number(form.montoFacturado) || 0) + (Number(form.itbisFacturado) || 0);
+  form.montoEfectivo = 0;
+  form.montoChequeTransferencia = 0;
+  form.montoTarjeta = 0;
+  form.montoVentaCredito = 0;
+  form.montoBonos = 0;
+  form.montoPermuta = 0;
+  form.montoOtrasFormas = 0;
+
+  if (tipo === "CREDITO") form.montoVentaCredito = total;
+  else if (tipo === "EFECTIVO") form.montoEfectivo = total;
+  else if (tipo === "TRANSFERENCIA") form.montoChequeTransferencia = total;
+  else if (tipo === "TARJETA") form.montoTarjeta = total;
+
+  toast.add({
+    severity: "info",
+    summary: "Forma de venta asignada",
+    detail: `Total RD$ ${total.toLocaleString("es-DO", { minimumFractionDigits: 2 })} asignado a ${tipo.toLowerCase()}.`,
+    life: 2500,
+  });
+}
+
+function irACampoValidacion(v: { codigo: string; campo?: string | null }) {
+  if (
+    v.codigo === "FORMA_VENTA_INDEFINIDA" ||
+    v.codigo === "DESCUADRE_607" ||
+    v.codigo === "ITBIS_INCONSISTENTE" ||
+    v.campo === "montoFacturado" ||
+    v.campo === "itbisFacturado" ||
+    v.campo?.startsWith("monto")
+  ) {
+    pestanaActiva.value = "montos";
+  } else if (v.campo === "lineas") {
+    pestanaActiva.value = "lineas";
+  } else {
+    pestanaActiva.value = "generales";
+  }
+}
+
 const form = reactive({
-  tipoIdentificacion: '1',
-  nombreEmisor: '',
-  identificacionEmisor: '',
-  nombreReceptor: '',
-  identificacionReceptor: '',
-  ncf: '',
-  ncfModificado: '',
+  tipoIdentificacion: "1",
+  clasificacionOperacion: "PENDIENTE" as ClasificacionOperacion,
+  tipoNcfCodigo: "",
+  nombreEmisor: "",
+  identificacionEmisor: "",
+  nombreReceptor: "",
+  identificacionReceptor: "",
+  ncf: "",
+  ncfModificado: "",
   fechaComprobante: null as Date | null,
   fechaRetencionOPago: null as Date | null,
-  tipoIngreso: '',
-  tipoBienesServicios: '',
-  formaPago: '',
+  tipoIngreso: "",
+  tipoBienesServicios: "",
+  formaPago: "",
   montoFacturado: 0,
   itbisFacturado: 0,
   itbisRetenido: 0,
@@ -123,17 +226,19 @@ function aFecha(iso: string | null): Date | null {
 
 function cargarDesdeFactura(f: Factura) {
   form.tipoIdentificacion = f.tipoIdentificacion;
-  form.nombreEmisor = f.nombreEmisor ?? '';
-  form.identificacionEmisor = f.identificacionEmisor ?? '';
-  form.nombreReceptor = f.nombreReceptor ?? '';
-  form.identificacionReceptor = f.identificacionReceptor ?? '';
+  form.clasificacionOperacion = f.clasificacionOperacion || (f.formato === "F607" ? "INGRESO" : f.formato === "F606" ? "GASTO" : "PENDIENTE");
+  form.tipoNcfCodigo = f.tipoNcfCodigo || f.tipoNcf?.codigo || (f.ncf ? f.ncf.slice(0, 3) : "");
+  form.nombreEmisor = f.nombreEmisor ?? "";
+  form.identificacionEmisor = f.identificacionEmisor ?? "";
+  form.nombreReceptor = f.nombreReceptor ?? "";
+  form.identificacionReceptor = f.identificacionReceptor ?? "";
   form.ncf = f.ncf;
-  form.ncfModificado = f.ncfModificado ?? '';
+  form.ncfModificado = f.ncfModificado ?? "";
   form.fechaComprobante = aFecha(f.fechaComprobante);
   form.fechaRetencionOPago = aFecha(f.fechaRetencionOPago);
-  form.tipoIngreso = f.tipoIngreso ?? '';
-  form.tipoBienesServicios = f.tipoBienesServicios ?? '';
-  form.formaPago = f.formaPago ?? '';
+  form.tipoIngreso = f.tipoIngreso ?? (form.clasificacionOperacion === "INGRESO" ? "01" : "");
+  form.tipoBienesServicios = f.tipoBienesServicios ?? "";
+  form.formaPago = f.formaPago ?? "";
   form.montoFacturado = Number(f.montoFacturado);
   form.itbisFacturado = Number(f.itbisFacturado);
   form.itbisRetenido = Number(f.itbisRetenido);
@@ -152,6 +257,15 @@ function cargarDesdeFactura(f: Factura) {
   form.montoBonos = Number(f.montoBonos ?? 0);
   form.montoPermuta = Number(f.montoPermuta ?? 0);
   form.montoOtrasFormas = Number(f.montoOtrasFormas ?? 0);
+}
+
+function seleccionarClasificacion(op: "INGRESO" | "COSTO" | "GASTO") {
+  form.clasificacionOperacion = op;
+  if (op === "INGRESO") {
+    if (!form.tipoIngreso) form.tipoIngreso = "01";
+  } else {
+    form.tipoIngreso = "";
+  }
 }
 
 async function cargar() {
@@ -183,20 +297,20 @@ function confianza(campo: string): number | null {
 function confiableSinEntrada(campo: string): boolean {
   if (factura.value?.confidences == null) return false;
   const valor = (form as Record<string, unknown>)[campo];
-  return valor !== null && valor !== undefined && valor !== '';
+  return valor !== null && valor !== undefined && valor !== "";
 }
 
-function tonoConfianza(campo: string): 'ok' | 'alerta' | 'error' | 'indigo' {
+function tonoConfianza(campo: string): "ok" | "alerta" | "error" | "indigo" {
   const c = confianza(campo);
-  if (c === null) return confiableSinEntrada(campo) ? 'ok' : 'indigo';
-  if (c >= 0.9) return 'ok';
-  if (c >= 0.8) return 'alerta';
-  return 'error';
+  if (c === null) return confiableSinEntrada(campo) ? "ok" : "indigo";
+  if (c >= 0.9) return "ok";
+  if (c >= 0.8) return "alerta";
+  return "error";
 }
 
 function textoConfianza(campo: string): string {
   const c = confianza(campo);
-  if (c === null) return confiableSinEntrada(campo) ? 'Alta' : 'Manual';
+  if (c === null) return confiableSinEntrada(campo) ? "Alta" : "Manual";
   return `${Math.round(c * 100)}%`;
 }
 
@@ -216,20 +330,24 @@ const erroresPorCampo = computed(() => {
 });
 
 const tasaItbisPct = computed(() => {
-  const cliente = clientes.value.find((c) => c.id === factura.value?.cliente?.id);
+  const cliente = clientes.value.find(
+    (c) => c.id === factura.value?.cliente?.id,
+  );
   return cliente ? Math.round(Number(cliente.tasaItbis) * 100) : null;
 });
 
 function normalizarIdentificacion(id: string | null | undefined): string {
-  if (!id) return '';
-  return id.replace(/[^\d]/g, '');
+  if (!id) return "";
+  return id.replace(/[^\d]/g, "");
 }
 
 const mismatchRnc = computed(() => {
   if (!factura.value || !factura.value.cliente) return false;
   const clienteRnc = normalizarIdentificacion(factura.value.cliente.rnc);
   const emisorId = normalizarIdentificacion(factura.value.identificacionEmisor);
-  const receptorId = normalizarIdentificacion(factura.value.identificacionReceptor);
+  const receptorId = normalizarIdentificacion(
+    factura.value.identificacionReceptor,
+  );
   if (!clienteRnc) return false;
   return clienteRnc !== emisorId && clienteRnc !== receptorId;
 });
@@ -244,15 +362,23 @@ const totales = computed(() => {
     Number(f.otrosImpuestos) +
     Number(f.propinaLegal);
   return [
-    { label: 'Monto facturado', valor: fmtMonto(f.montoFacturado), fuerte: false },
     {
-      label: `ITBIS facturado${tasaItbisPct.value !== null ? ` (${tasaItbisPct.value}%)` : ''}`,
+      label: "Monto facturado",
+      valor: fmtMonto(f.montoFacturado),
+      fuerte: false,
+    },
+    {
+      label: `ITBIS facturado${tasaItbisPct.value !== null ? ` (${tasaItbisPct.value}%)` : ""}`,
       valor: fmtMonto(f.itbisFacturado),
       fuerte: false,
     },
-    { label: 'ITBIS retenido', valor: fmtMonto(f.itbisRetenido), fuerte: false },
-    { label: 'Propina legal', valor: fmtMonto(f.propinaLegal), fuerte: false },
-    { label: 'Total', valor: fmtMonto(String(total)), fuerte: true },
+    {
+      label: "ITBIS retenido",
+      valor: fmtMonto(f.itbisRetenido),
+      fuerte: false,
+    },
+    { label: "Propina legal", valor: fmtMonto(f.propinaLegal), fuerte: false },
+    { label: "Total", valor: fmtMonto(String(total)), fuerte: true },
   ];
 });
 
@@ -264,21 +390,21 @@ const paginacion = computed(() => {
 
 const subtitulo = computed(() => {
   const f = factura.value;
-  if (!f) return '';
+  if (!f) return "";
   const partes = [
     f.ncf ? `NCF ${f.ncf}` : null,
     f.identificacionEmisor ? `RNC ${f.identificacionEmisor}` : null,
     fmtFechaCorta(f.fechaComprobante),
     f.cliente ? `Cliente: ${f.cliente.nombre}` : null,
   ];
-  return partes.filter(Boolean).join(' · ');
+  return partes.filter(Boolean).join(" · ");
 });
 
 function tipoIdentificacionPorLongitud(valor: string): string {
-  const digitos = valor.replace(/\D/g, '');
-  if (digitos.length === 9) return '1';
-  if (digitos.length === 11) return '2';
-  return '3';
+  const digitos = valor.replace(/\D/g, "");
+  if (digitos.length === 9) return "1";
+  if (digitos.length === 11) return "2";
+  return "3";
 }
 
 /**
@@ -301,6 +427,8 @@ async function guardar(): Promise<Factura | null> {
   try {
     const payload: Record<string, unknown> = {
       tipoIdentificacion: form.tipoIdentificacion,
+      clasificacionOperacion: form.clasificacionOperacion,
+      tipoNcfCodigo: form.tipoNcfCodigo || null,
       nombreEmisor: form.nombreEmisor || null,
       identificacionEmisor: form.identificacionEmisor || null,
       nombreReceptor: form.nombreReceptor || null,
@@ -319,9 +447,9 @@ async function guardar(): Promise<Factura | null> {
       otrosImpuestos: form.otrosImpuestos,
       propinaLegal: form.propinaLegal,
     };
-    if (formato.value === 'F607') {
+    if (form.clasificacionOperacion === "INGRESO" || formato.value === "F607") {
       Object.assign(payload, {
-        tipoIngreso: form.tipoIngreso || null,
+        tipoIngreso: form.tipoIngreso || "01",
         montoEfectivo: form.montoEfectivo,
         montoChequeTransferencia: form.montoChequeTransferencia,
         montoTarjeta: form.montoTarjeta,
@@ -330,7 +458,7 @@ async function guardar(): Promise<Factura | null> {
         montoPermuta: form.montoPermuta,
         montoOtrasFormas: form.montoOtrasFormas,
       });
-    } else if (formato.value === 'F606') {
+    } else {
       Object.assign(payload, {
         tipoBienesServicios: form.tipoBienesServicios || null,
         formaPago: form.formaPago || null,
@@ -344,9 +472,9 @@ async function guardar(): Promise<Factura | null> {
     return actualizada;
   } catch (e: any) {
     toast.add({
-      severity: 'error',
-      summary: 'No se pudo guardar',
-      detail: e?.response?.data?.message ?? 'Revisa los campos marcados.',
+      severity: "error",
+      summary: "No se pudo guardar",
+      detail: e?.response?.data?.message ?? "Revisa los campos marcados.",
       life: 5000,
     });
     return null;
@@ -355,30 +483,25 @@ async function guardar(): Promise<Factura | null> {
   }
 }
 
-/**
- * Único acto de confirmar: sin cliente asignado no hay clasificación que
- * confirmar, así que solo se guarda. `clasificacionConfirmada` es el único
- * estado que gatea el TXT — `revisada` quedó retirado de la interfaz.
- *
- * Todas las ramas terminan en un toast: guardar() ya avisa si falla, pero su
- * éxito era silencioso — sin cliente asignado (el caso normal de solo
- * "Guardar") no pasaba nada visible en pantalla.
- */
 async function guardarYConfirmar() {
   const guardada = await guardar();
   if (!guardada) return;
   if (!guardada.clienteId) {
-    toast.add({ severity: 'success', summary: 'Factura guardada', life: 2500 });
+    toast.add({ severity: "success", summary: "Factura guardada", life: 2500 });
     return;
   }
   const r = await confirmarClasificacionLote([guardada.id]);
   if (r.procesadas > 0) {
     factura.value = { ...guardada, clasificacionConfirmada: true };
-    toast.add({ severity: 'success', summary: 'Factura confirmada', life: 2500 });
+    toast.add({
+      severity: "success",
+      summary: "Factura confirmada",
+      life: 2500,
+    });
   } else {
     toast.add({
-      severity: 'warn',
-      summary: 'Guardada, pero no se pudo confirmar',
+      severity: "warn",
+      summary: "Guardada, pero no se pudo confirmar",
       detail: r.fallidas[0]?.motivo,
       life: 5000,
     });
@@ -389,14 +512,23 @@ async function clasificar() {
   if (!clasificacion.clienteId || !factura.value) return;
   clasificando.value = true;
   try {
-    factura.value = await clasificarFactura(factura.value.id, clasificacion.clienteId, clasificacion.formato);
+    const formatoDerivado: Formato = clasificacion.clasificacionOperacion === "INGRESO" ? "F607" : "F606";
+    factura.value = await clasificarFactura(
+      factura.value.id,
+      clasificacion.clienteId,
+      formatoDerivado,
+    );
     cargarDesdeFactura(factura.value);
-    toast.add({ severity: 'success', summary: 'Factura clasificada', life: 2500 });
+    toast.add({
+      severity: "success",
+      summary: "Factura clasificada",
+      life: 2500,
+    });
   } catch (e: any) {
     toast.add({
-      severity: 'error',
-      summary: 'No se pudo clasificar',
-      detail: e?.response?.data?.message ?? 'Intenta de nuevo.',
+      severity: "error",
+      summary: "No se pudo clasificar",
+      detail: e?.response?.data?.message ?? "Intenta de nuevo.",
       life: 5000,
     });
   } finally {
@@ -410,28 +542,33 @@ async function clasificar() {
  */
 function volver() {
   if (window.history.state?.back) router.back();
-  else router.push({ name: 'facturas' });
+  else router.push({ name: "facturas" });
 }
 
 function descartar() {
   confirm.require({
-    message: 'Se eliminará la factura y, si era la única del documento, también el archivo subido.',
-    header: '¿Descartar esta factura?',
-    icon: 'pi pi-exclamation-triangle',
-    acceptLabel: 'Descartar',
-    rejectLabel: 'Cancelar',
-    acceptProps: { severity: 'danger' },
+    message:
+      "Se eliminará la factura y, si era la única del documento, también el archivo subido.",
+    header: "¿Descartar esta factura?",
+    icon: "pi pi-exclamation-triangle",
+    acceptLabel: "Descartar",
+    rejectLabel: "Cancelar",
+    acceptProps: { severity: "danger" },
     accept: async () => {
       if (!factura.value) return;
       try {
         await eliminarFactura(factura.value.id);
-        toast.add({ severity: 'success', summary: 'Factura descartada', life: 2500 });
+        toast.add({
+          severity: "success",
+          summary: "Factura descartada",
+          life: 2500,
+        });
         volver();
       } catch (e: any) {
         toast.add({
-          severity: 'error',
-          summary: 'No se pudo descartar',
-          detail: e?.response?.data?.message ?? 'Intenta de nuevo.',
+          severity: "error",
+          summary: "No se pudo descartar",
+          detail: e?.response?.data?.message ?? "Intenta de nuevo.",
           life: 5000,
         });
       }
@@ -441,8 +578,8 @@ function descartar() {
 
 function onTeclado(ev: KeyboardEvent) {
   const destino = ev.target as HTMLElement | null;
-  const enCampo = destino?.tagName === 'INPUT' || destino?.tagName === 'SELECT';
-  if (ev.key === 'Enter' && enCampo) {
+  const enCampo = destino?.tagName === "INPUT" || destino?.tagName === "SELECT";
+  if (ev.key === "Enter" && enCampo) {
     ev.preventDefault();
     guardarYConfirmar();
   }
@@ -465,12 +602,12 @@ watch(() => props.facturaId, cargar);
 onMounted(async () => {
   await Promise.all([cargar(), catalogos.cargar()]);
   clientes.value = await listarClientes();
-  window.addEventListener('keydown', onTeclado);
-  window.addEventListener('resize', onResize);
+  window.addEventListener("keydown", onTeclado);
+  window.addEventListener("resize", onResize);
 });
 onUnmounted(() => {
-  window.removeEventListener('keydown', onTeclado);
-  window.removeEventListener('resize', onResize);
+  window.removeEventListener("keydown", onTeclado);
+  window.removeEventListener("resize", onResize);
 });
 </script>
 
@@ -484,26 +621,64 @@ onUnmounted(() => {
       <div class="cabecera">
         <div class="cabecera__izq">
           <button type="button" class="volver" @click="volver">
-            <i class="pi pi-arrow-left" style="font-size: 10px"></i>Volver a facturas
+            <i class="pi pi-arrow-left" style="font-size: 10px"></i>Volver a
+            facturas
           </button>
           <div class="cabecera__titulo">
-            <h1>{{ factura.nombreEmisor ?? 'Factura sin emisor' }}</h1>
+            <h1>{{ factura.nombreEmisor ?? "Factura sin emisor" }}</h1>
             <Pastilla
-              v-if="factura.formato"
-              :texto="factura.formato === 'F607' ? 'INGRESO · 607' : 'GASTO · 606'"
-              :tono="factura.formato === 'F607' ? 'ok' : 'neutro'"
+              v-if="form.clasificacionOperacion === 'INGRESO' || factura.formato === 'F607'"
+              texto="INGRESO · 607"
+              tono="ok"
+              icono="pi-arrow-down-left"
+            />
+            <Pastilla
+              v-else-if="form.clasificacionOperacion === 'COSTO'"
+              texto="COSTO · 606"
+              tono="teal"
+              icono="pi-box"
+            />
+            <Pastilla
+              v-else-if="form.clasificacionOperacion === 'GASTO' || factura.formato === 'F606'"
+              texto="GASTO · 606"
+              tono="neutro"
+              icono="pi-arrow-up-right"
+            />
+            <Pastilla
+              v-else-if="form.clasificacionOperacion === 'CLASIFICACION_AMBIGUA'"
+              texto="AMBIGUA"
+              tono="error"
+              icono="pi-exclamation-circle"
             />
             <Pastilla v-else texto="Sin clasificar" tono="alerta" />
+
             <Pastilla
-              :texto="factura.origen === 'IA' ? 'Extraída por IA' : factura.origen === 'EDITADA' ? 'Editada a mano' : 'Manual'"
+              :texto="
+                factura.origen === 'IA'
+                  ? 'Extraída por IA'
+                  : factura.origen === 'EDITADA'
+                    ? 'Editada a mano'
+                    : 'Manual'
+              "
               tono="indigo"
             />
-            <Pastilla v-if="factura.clasificacionConfirmada" texto="Confirmada" tono="ok" icono="pi-check" />
+            <Pastilla
+              v-if="factura.clasificacionConfirmada"
+              texto="Confirmada"
+              tono="ok"
+              icono="pi-check"
+            />
           </div>
           <span class="cabecera__sub">{{ subtitulo }}</span>
         </div>
         <div class="cabecera__acciones">
-          <Button label="Descartar" outlined severity="secondary" size="small" @click="descartar" />
+          <Button
+            label="Descartar"
+            outlined
+            severity="secondary"
+            size="small"
+            @click="descartar"
+          />
           <Button
             :label="factura.clienteId ? 'Guardar y confirmar' : 'Guardar'"
             size="small"
@@ -519,13 +694,31 @@ onUnmounted(() => {
           <div class="panel__cabecera">
             <span class="panel__titulo">Documento original</span>
             <div class="herramientas">
-              <button type="button" class="herramienta" title="Alejar" aria-label="Alejar" @click="visorRef?.alejar()">
+              <button
+                type="button"
+                class="herramienta"
+                title="Alejar"
+                aria-label="Alejar"
+                @click="visorRef?.alejar()"
+              >
                 <i class="pi pi-search-minus"></i>
               </button>
-              <button type="button" class="herramienta" title="Acercar" aria-label="Acercar" @click="visorRef?.acercar()">
+              <button
+                type="button"
+                class="herramienta"
+                title="Acercar"
+                aria-label="Acercar"
+                @click="visorRef?.acercar()"
+              >
                 <i class="pi pi-search-plus"></i>
               </button>
-              <button type="button" class="herramienta herramienta-desktop" title="Rotar" aria-label="Rotar" @click="visorRef?.rotar()">
+              <button
+                type="button"
+                class="herramienta herramienta-desktop"
+                title="Rotar"
+                aria-label="Rotar"
+                @click="visorRef?.rotar()"
+              >
                 <i class="pi pi-refresh"></i>
               </button>
               <button
@@ -546,7 +739,11 @@ onUnmounted(() => {
               >
                 <i class="pi pi-ellipsis-v"></i>
               </button>
-              <Menu ref="menuHerramientas" :model="itemsHerramientas" :popup="true" />
+              <Menu
+                ref="menuHerramientas"
+                :model="itemsHerramientas"
+                :popup="true"
+              />
             </div>
           </div>
           <VisorDocumento
@@ -558,34 +755,71 @@ onUnmounted(() => {
             alto-maximo="min(72vh, 720px)"
           />
           <div class="panel__pie">
-            <span>{{ factura.documento?.filename ?? '—' }} · {{ paginacion }}</span>
-            <button type="button" class="enlace" @click="verOcr = true">Ver texto OCR</button>
+            <span
+              >{{ factura.documento?.filename ?? "—" }} · {{ paginacion }}</span
+            >
+            <button type="button" class="enlace" @click="verOcr = true">
+              Ver texto OCR
+            </button>
           </div>
         </section>
 
         <!-- ── Campos ── -->
         <div class="derecha">
           <section class="panel panel--sin-padding">
-            <!-- Sin cliente ni formato no hay 606/607 que rellenar: primero se clasifica. -->
+            <!-- Barra de Selección de Clasificación Contable Rápida -->
+            <div class="barra-clasificacion">
+              <div class="barra-clasificacion__header">
+                <span class="barra-clasificacion__titulo">Clasificación Contable:</span>
+                <div v-if="factura.justificacionIa" class="banner-ia" :title="factura.justificacionIa">
+                  <i class="pi pi-sparkles"></i>
+                  <span>{{ factura.justificacionIa }}</span>
+                </div>
+              </div>
+              <div class="botones-operacion">
+                <button
+                  type="button"
+                  class="btn-op"
+                  :class="{ 'btn-op--activo': form.clasificacionOperacion === 'INGRESO' }"
+                  @click="seleccionarClasificacion('INGRESO')"
+                >
+                  <i class="pi pi-arrow-down-left"></i> Ingreso (607)
+                </button>
+                <button
+                  type="button"
+                  class="btn-op"
+                  :class="{ 'btn-op--activo': form.clasificacionOperacion === 'COSTO' }"
+                  @click="seleccionarClasificacion('COSTO')"
+                >
+                  <i class="pi pi-box"></i> Costo (606)
+                </button>
+                <button
+                  type="button"
+                  class="btn-op"
+                  :class="{ 'btn-op--activo': form.clasificacionOperacion === 'GASTO' }"
+                  @click="seleccionarClasificacion('GASTO')"
+                >
+                  <i class="pi pi-arrow-up-right"></i> Gasto (606)
+                </button>
+              </div>
+            </div>
+
+            <!-- Asignación de Cliente si aún no tiene uno vinculado -->
             <div v-if="!factura.clienteId" class="clasificar">
-              <p><strong>Sin clasificar.</strong> Elige a qué cliente y en qué formato pertenece esta factura.</p>
+              <p>
+                <strong>Asignar a Cliente.</strong> Elige el cliente del maestro al que se imputará esta factura:
+              </p>
               <div class="clasificar__campos">
                 <Select
                   v-model="clasificacion.clienteId"
                   :options="clientes"
                   option-label="nombre"
                   option-value="id"
-                  placeholder="Elige un cliente"
+                  placeholder="Elige un cliente del maestro"
                   class="clasificar__cliente"
                 />
-                <Select
-                  v-model="clasificacion.formato"
-                  :options="FORMATOS"
-                  option-label="label"
-                  option-value="value"
-                />
                 <Button
-                  label="Clasificar"
+                  label="Asignar y clasificar"
                   size="small"
                   :disabled="!clasificacion.clienteId"
                   :loading="clasificando"
@@ -594,11 +828,13 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <Tabs value="generales">
+            <Tabs v-model:value="pestanaActiva">
               <TabList>
                 <Tab value="generales">Generales</Tab>
                 <Tab value="montos">Montos e impuestos</Tab>
-                <Tab value="lineas">Líneas ({{ factura.lineas?.length ?? 0 }})</Tab>
+                <Tab value="lineas"
+                  >Líneas ({{ factura.lineas?.length ?? 0 }})</Tab
+                >
               </TabList>
 
               <TabPanels>
@@ -607,85 +843,174 @@ onUnmounted(() => {
                   <div class="campos">
                     <div v-if="mismatchRnc" class="alerta-rnc">
                       <i class="pi pi-exclamation-triangle"></i>
-                      <span>Aviso: El RNC del cliente asignado ({{ factura?.cliente?.rnc }}) no coincide con el emisor ni con el receptor del documento.</span>
+                      <span
+                        >Aviso: El RNC del cliente asignado ({{
+                          factura?.cliente?.rnc
+                        }}) no coincide con el emisor ni con el receptor del
+                        documento.</span
+                      >
                     </div>
 
-                    <!-- Emisor y receptor son solo el nombre: el RNC/Cédula que cuenta
-                         es uno solo ("declarado", abajo) — tener otro por cada lado
-                         era el mismo dato tres veces, con un botón "Usar" solo para
-                         copiar uno sobre el otro. -->
                     <div class="campo campo--ancho">
                       <div class="campo__cabecera">
                         <label for="f-nombreEmisor">Emisor (comercio)</label>
-                        <Pastilla :texto="textoConfianza('nombreEmisor')" :tono="tonoConfianza('nombreEmisor')" tamano="sm" />
+                        <div style="display: flex; gap: 6px; align-items: center">
+                          <button
+                            v-if="form.nombreEmisor || form.identificacionEmisor"
+                            type="button"
+                            class="btn-crear-cliente-inline"
+                            @click="abrirModalCliente('EMISOR')"
+                          >
+                            <i class="pi pi-plus" style="font-size: 9px"></i> Crear cliente
+                          </button>
+                          <Pastilla
+                            :texto="textoConfianza('nombreEmisor')"
+                            :tono="tonoConfianza('nombreEmisor')"
+                            tamano="sm"
+                          />
+                        </div>
                       </div>
-                      <InputText id="f-nombreEmisor" v-model="form.nombreEmisor" placeholder="Nombre del comercio" fluid />
+                      <InputText
+                        id="f-nombreEmisor"
+                        v-model="form.nombreEmisor"
+                        placeholder="Nombre del comercio emisor"
+                        fluid
+                      />
                     </div>
-
-                    <div v-if="campoIdentificacionDeclarada" class="campo campo--ancho">
+                    <div class="campo campo--ancho">
                       <div class="campo__cabecera">
-                        <label for="f-identificacionDeclarada">RNC / Cédula declarado</label>
+                        <label for="f-identificacionEmisor"
+                          >RNC / Cédula (Comercio)</label
+                        >
                         <Pastilla
-                          :texto="textoConfianza(campoIdentificacionDeclarada)"
-                          :tono="tonoConfianza(campoIdentificacionDeclarada)"
+                          :texto="textoConfianza('identificacionEmisor')"
+                          :tono="tonoConfianza('identificacionEmisor')"
                           tamano="sm"
                         />
                       </div>
                       <InputText
-                        id="f-identificacionDeclarada"
-                        v-model="identificacionDeclarada"
-                        :invalid="!!erroresPorCampo[campoIdentificacionDeclarada]"
+                        id="f-identificacionEmisor"
+                        v-model="form.identificacionEmisor"
+                        placeholder="RNC / Cédula del emisor"
                         fluid
                       />
-                      <span v-if="erroresPorCampo[campoIdentificacionDeclarada]" class="nota nota--error">
-                        {{ erroresPorCampo[campoIdentificacionDeclarada][0] }}
-                      </span>
-                      <span v-else class="nota">
-                        {{
-                          formato === 'F607'
-                            ? 'En un 607 esta columna es del comprador.'
-                            : 'En un 606 esta columna es del proveedor.'
-                        }}
-                      </span>
                     </div>
 
                     <div class="campo campo--ancho">
                       <div class="campo__cabecera">
                         <label for="f-nombreReceptor">Receptor (cliente)</label>
-                        <Pastilla :texto="textoConfianza('nombreReceptor')" :tono="tonoConfianza('nombreReceptor')" tamano="sm" />
+                        <div style="display: flex; gap: 6px; align-items: center">
+                          <button
+                            v-if="form.nombreReceptor || form.identificacionReceptor"
+                            type="button"
+                            class="btn-crear-cliente-inline"
+                            @click="abrirModalCliente('RECEPTOR')"
+                          >
+                            <i class="pi pi-plus" style="font-size: 9px"></i> Crear cliente
+                          </button>
+                          <Pastilla
+                            :texto="textoConfianza('nombreReceptor')"
+                            :tono="tonoConfianza('nombreReceptor')"
+                            tamano="sm"
+                          />
+                        </div>
                       </div>
-                      <InputText id="f-nombreReceptor" v-model="form.nombreReceptor" placeholder="Nombre del cliente" fluid />
+                      <InputText
+                        id="f-nombreReceptor"
+                        v-model="form.nombreReceptor"
+                        placeholder="Nombre del cliente receptor"
+                        fluid
+                      />
+                    </div>
+                    <div class="campo campo--ancho">
+                      <div class="campo__cabecera">
+                        <label for="f-identificacionReceptor"
+                          >RNC / Cédula Receptor (Cliente)</label
+                        >
+                        <Pastilla
+                          :texto="textoConfianza('identificacionReceptor')"
+                          :tono="tonoConfianza('identificacionReceptor')"
+                          tamano="sm"
+                        />
+                      </div>
+                      <InputText
+                        id="f-identificacionReceptor"
+                        v-model="form.identificacionReceptor"
+                        placeholder="RNC / Cédula del receptor"
+                        fluid
+                      />
                     </div>
 
-                    <div class="campo" :class="{ 'campo--dudoso': dudoso('ncf') }">
+                    <div
+                      class="campo"
+                      :class="{ 'campo--dudoso': dudoso('ncf') }"
+                    >
                       <div class="campo__cabecera">
                         <label for="f-ncf">NCF</label>
-                        <Pastilla :texto="textoConfianza('ncf')" :tono="tonoConfianza('ncf')" tamano="sm" />
+                        <Pastilla
+                          :texto="textoConfianza('ncf')"
+                          :tono="tonoConfianza('ncf')"
+                          tamano="sm"
+                        />
                       </div>
-                      <InputText id="f-ncf" v-model="form.ncf" :invalid="!!erroresPorCampo.ncf" fluid />
-                      <span v-if="erroresPorCampo.ncf" class="nota nota--error">{{ erroresPorCampo.ncf[0] }}</span>
+                      <InputText
+                        id="f-ncf"
+                        v-model="form.ncf"
+                        :invalid="!!erroresPorCampo.ncf"
+                        fluid
+                      />
+                      <span
+                        v-if="erroresPorCampo.ncf"
+                        class="nota nota--error"
+                        >{{ erroresPorCampo.ncf[0] }}</span
+                      >
                       <span v-else-if="dudoso('ncf')" class="nota nota--alerta">
                         Confianza baja — confirma contra el comprobante
                       </span>
                     </div>
 
+                    <!-- Tipo de NCF Editable conectado al catálogo oficial DGII -->
                     <div class="campo">
-                      <div class="campo__cabecera"><label for="f-tipoNcf">Tipo de NCF</label></div>
-                      <InputText id="f-tipoNcf" :model-value="factura.tipoNcf?.descripcion ?? '—'" readonly fluid />
-                      <span class="nota">Se deduce del propio NCF.</span>
+                      <div class="campo__cabecera">
+                        <label for="f-tipoNcf">Tipo de NCF</label>
+                      </div>
+                      <Select
+                        v-model="form.tipoNcfCodigo"
+                        input-id="f-tipoNcf"
+                        :options="catalogos.catalogos.tiposNcf"
+                        option-label="descripcion"
+                        option-value="codigo"
+                        placeholder="Seleccionar tipo de NCF"
+                        fluid
+                      />
                     </div>
 
                     <div class="campo">
-                      <div class="campo__cabecera"><label for="f-ncfModificado">NCF modificado</label></div>
-                      <InputText id="f-ncfModificado" v-model="form.ncfModificado" :invalid="!!erroresPorCampo.ncfModificado" fluid />
-                      <span v-if="erroresPorCampo.ncfModificado" class="nota nota--error">
+                      <div class="campo__cabecera">
+                        <label for="f-ncfModificado">NCF modificado</label>
+                      </div>
+                      <InputText
+                        id="f-ncfModificado"
+                        v-model="form.ncfModificado"
+                        :invalid="!!erroresPorCampo.ncfModificado"
+                        fluid
+                      />
+                      <span
+                        v-if="erroresPorCampo.ncfModificado"
+                        class="nota nota--error"
+                      >
                         {{ erroresPorCampo.ncfModificado[0] }}
                       </span>
                     </div>
 
-                    <div class="campo" :class="{ 'campo--dudoso': dudoso('fechaComprobante') }">
+                    <div
+                      class="campo"
+                      :class="{ 'campo--dudoso': dudoso('fechaComprobante') }"
+                    >
                       <div class="campo__cabecera">
-                        <label for="f-fechaComprobante">Fecha del comprobante</label>
+                        <label for="f-fechaComprobante"
+                          >Fecha del comprobante</label
+                        >
                         <Pastilla
                           :texto="textoConfianza('fechaComprobante')"
                           :tono="tonoConfianza('fechaComprobante')"
@@ -701,17 +1026,27 @@ onUnmounted(() => {
                         :invalid="!!erroresPorCampo.fechaComprobante"
                         fluid
                       />
-                      <span v-if="erroresPorCampo.fechaComprobante" class="nota nota--error">
+                      <span
+                        v-if="erroresPorCampo.fechaComprobante"
+                        class="nota nota--error"
+                      >
                         {{ erroresPorCampo.fechaComprobante[0] }}
                       </span>
-                      <span v-else-if="dudoso('fechaComprobante')" class="nota nota--alerta">
+                      <span
+                        v-else-if="dudoso('fechaComprobante')"
+                        class="nota nota--alerta"
+                      >
                         Confianza baja — confirma contra el comprobante
                       </span>
                     </div>
 
                     <div class="campo">
                       <div class="campo__cabecera">
-                        <label for="f-fechaRetencionOPago">{{ formato === 'F606' ? 'Fecha de pago' : 'Fecha de retención' }}</label>
+                        <label for="f-fechaRetencionOPago">{{
+                          form.clasificacionOperacion === "INGRESO"
+                            ? "Fecha de retención"
+                            : "Fecha de pago"
+                        }}</label>
                       </div>
                       <DatePicker
                         v-model="form.fechaRetencionOPago"
@@ -723,28 +1058,41 @@ onUnmounted(() => {
                       />
                     </div>
 
-                    <div v-if="formato === 'F607'" class="campo campo--ancho">
-                      <div class="campo__cabecera"><label for="f-tipoIngreso">Tipo de ingreso</label></div>
+                    <!-- Si es INGRESO: selector Tipo de ingreso (default 01) -->
+                    <div v-if="form.clasificacionOperacion === 'INGRESO' || formato === 'F607'" class="campo campo--ancho">
+                      <div class="campo__cabecera">
+                        <label for="f-tipoIngreso">Tipo de ingreso (607)</label>
+                      </div>
                       <Select
                         v-model="form.tipoIngreso"
                         input-id="f-tipoIngreso"
                         :options="catalogos.catalogos.tiposIngreso607"
                         option-label="descripcion"
                         option-value="codigo"
-                        placeholder="— sin definir —"
-                        show-clear
+                        placeholder="01 - Ingresos por Operaciones (No Financieros)"
                         :invalid="!!erroresPorCampo.tipoIngreso"
                         fluid
                       />
-                      <span v-if="erroresPorCampo.tipoIngreso" class="nota nota--error">
+                      <span
+                        v-if="erroresPorCampo.tipoIngreso"
+                        class="nota nota--error"
+                      >
                         {{ erroresPorCampo.tipoIngreso[0] }}
                       </span>
                     </div>
 
-                    <template v-else-if="formato === 'F606'">
-                      <div class="campo campo--ancho" :class="{ 'campo--dudoso': dudoso('tipoBienesServicios') }">
+                    <!-- Si es COSTO o GASTO: selector Tipo de bienes y servicios (sin default automático) -->
+                    <template v-else>
+                      <div
+                        class="campo campo--ancho"
+                        :class="{
+                          'campo--dudoso': dudoso('tipoBienesServicios'),
+                        }"
+                      >
                         <div class="campo__cabecera">
-                          <label for="f-tipoBienesServicios">Tipo de bienes y servicios (606)</label>
+                          <label for="f-tipoBienesServicios"
+                            >Tipo de costo / gasto (606)</label
+                          >
                           <Pastilla
                             :texto="textoConfianza('tipoBienesServicios')"
                             :tono="tonoConfianza('tipoBienesServicios')"
@@ -757,20 +1105,30 @@ onUnmounted(() => {
                           :options="catalogos.catalogos.tiposBienesServicios606"
                           option-label="descripcion"
                           option-value="codigo"
-                          placeholder="— sin definir —"
+                          placeholder="— Selecciona el tipo de costo o gasto —"
                           show-clear
                           :invalid="!!erroresPorCampo.tipoBienesServicios"
                           fluid
                         />
-                        <span v-if="erroresPorCampo.tipoBienesServicios" class="nota nota--error">
+                        <span
+                          v-if="erroresPorCampo.tipoBienesServicios"
+                          class="nota nota--error"
+                        >
                           {{ erroresPorCampo.tipoBienesServicios[0] }}
                         </span>
                       </div>
 
-                      <div class="campo campo--ancho" :class="{ 'campo--dudoso': dudoso('formaPago') }">
+                      <div
+                        class="campo campo--ancho"
+                        :class="{ 'campo--dudoso': dudoso('formaPago') }"
+                      >
                         <div class="campo__cabecera">
-                          <label for="f-formaPago">Forma de pago</label>
-                          <Pastilla :texto="textoConfianza('formaPago')" :tono="tonoConfianza('formaPago')" tamano="sm" />
+                          <label for="f-formaPago">Forma de pago (606)</label>
+                          <Pastilla
+                            :texto="textoConfianza('formaPago')"
+                            :tono="tonoConfianza('formaPago')"
+                            tamano="sm"
+                          />
                         </div>
                         <Select
                           v-model="form.formaPago"
@@ -778,15 +1136,21 @@ onUnmounted(() => {
                           :options="catalogos.catalogos.formasPago606"
                           option-label="descripcion"
                           option-value="codigo"
-                          placeholder="— sin definir —"
+                          placeholder="— Selecciona forma de pago —"
                           show-clear
                           :invalid="!!erroresPorCampo.formaPago"
                           fluid
                         />
-                        <span v-if="erroresPorCampo.formaPago" class="nota nota--error">
+                        <span
+                          v-if="erroresPorCampo.formaPago"
+                          class="nota nota--error"
+                        >
                           {{ erroresPorCampo.formaPago[0] }}
                         </span>
-                        <span v-else-if="dudoso('formaPago')" class="nota nota--alerta">
+                        <span
+                          v-else-if="dudoso('formaPago')"
+                          class="nota nota--alerta"
+                        >
                           Confianza baja — confirma contra el comprobante
                         </span>
                       </div>
@@ -794,10 +1158,17 @@ onUnmounted(() => {
 
                     <div v-if="factura.cliente" class="campo campo--ancho">
                       <div class="campo__cabecera">
-                        <label for="f-clienteImputado">Cliente al que se imputa</label>
-                        <Pastilla texto="Manual" tono="indigo" tamano="sm" />
+                        <label for="f-clienteImputado"
+                          >Cliente asignado en maestro</label
+                        >
+                        <Pastilla texto="Asignado" tono="ok" tamano="sm" />
                       </div>
-                      <InputText id="f-clienteImputado" :model-value="factura.cliente.nombre" readonly fluid />
+                      <InputText
+                        id="f-clienteImputado"
+                        :model-value="factura.cliente.nombre"
+                        readonly
+                        fluid
+                      />
                     </div>
                   </div>
                 </TabPanel>
@@ -805,17 +1176,38 @@ onUnmounted(() => {
                 <!-- ── Montos e impuestos ── -->
                 <TabPanel value="montos">
                   <div class="campos">
-                    <div class="campo" :class="{ 'campo--dudoso': dudoso('montoFacturado') }">
+                    <div
+                      class="campo"
+                      :class="{ 'campo--dudoso': dudoso('montoFacturado') }"
+                    >
                       <div class="campo__cabecera">
                         <label for="f-montoFacturado">Monto facturado</label>
-                        <Pastilla :texto="textoConfianza('montoFacturado')" :tono="tonoConfianza('montoFacturado')" tamano="sm" />
+                        <Pastilla
+                          :texto="textoConfianza('montoFacturado')"
+                          :tono="tonoConfianza('montoFacturado')"
+                          tamano="sm"
+                        />
                       </div>
-                      <InputNumber id="f-montoFacturado" v-model="form.montoFacturado" mode="currency" currency="DOP" locale="es-DO" fluid />
+                      <InputNumber
+                        id="f-montoFacturado"
+                        v-model="form.montoFacturado"
+                        mode="currency"
+                        currency="DOP"
+                        locale="es-DO"
+                        fluid
+                      />
                     </div>
-                    <div class="campo" :class="{ 'campo--dudoso': dudoso('itbisFacturado') }">
+                    <div
+                      class="campo"
+                      :class="{ 'campo--dudoso': dudoso('itbisFacturado') }"
+                    >
                       <div class="campo__cabecera">
                         <label for="f-itbisFacturado">ITBIS facturado</label>
-                        <Pastilla :texto="textoConfianza('itbisFacturado')" :tono="tonoConfianza('itbisFacturado')" tamano="sm" />
+                        <Pastilla
+                          :texto="textoConfianza('itbisFacturado')"
+                          :tono="tonoConfianza('itbisFacturado')"
+                          tamano="sm"
+                        />
                       </div>
                       <InputNumber
                         id="f-itbisFacturado"
@@ -826,59 +1218,187 @@ onUnmounted(() => {
                         :invalid="!!erroresPorCampo.itbisFacturado"
                         fluid
                       />
-                      <span v-if="erroresPorCampo.itbisFacturado" class="nota nota--alerta">
+                      <span
+                        v-if="erroresPorCampo.itbisFacturado"
+                        class="nota nota--alerta"
+                      >
                         {{ erroresPorCampo.itbisFacturado[0] }}
                       </span>
                     </div>
 
                     <div class="campo">
-                      <div class="campo__cabecera"><label for="f-isc">ISC</label></div>
-                      <InputNumber id="f-isc" v-model="form.isc" mode="currency" currency="DOP" locale="es-DO" fluid />
-                    </div>
-                    <div class="campo">
-                      <div class="campo__cabecera"><label for="f-otrosImpuestos">Otros impuestos</label></div>
-                      <InputNumber id="f-otrosImpuestos" v-model="form.otrosImpuestos" mode="currency" currency="DOP" locale="es-DO" fluid />
-                    </div>
-                    <div class="campo">
-                      <div class="campo__cabecera"><label for="f-propinaLegal">Propina legal</label></div>
-                      <InputNumber id="f-propinaLegal" v-model="form.propinaLegal" mode="currency" currency="DOP" locale="es-DO" fluid />
+                      <div class="campo__cabecera">
+                        <label for="f-isc">ISC</label>
+                      </div>
+                      <InputNumber
+                        id="f-isc"
+                        v-model="form.isc"
+                        mode="currency"
+                        currency="DOP"
+                        locale="es-DO"
+                        fluid
+                      />
                     </div>
                     <div class="campo">
                       <div class="campo__cabecera">
-                        <label for="f-itbisRetenido">{{ formato === 'F606' ? 'ITBIS retenido' : 'ITBIS retenido por terceros' }}</label>
+                        <label for="f-otrosImpuestos">Otros impuestos</label>
                       </div>
-                      <InputNumber id="f-itbisRetenido" v-model="form.itbisRetenido" mode="currency" currency="DOP" locale="es-DO" fluid />
+                      <InputNumber
+                        id="f-otrosImpuestos"
+                        v-model="form.otrosImpuestos"
+                        mode="currency"
+                        currency="DOP"
+                        locale="es-DO"
+                        fluid
+                      />
                     </div>
                     <div class="campo">
                       <div class="campo__cabecera">
-                        <label for="f-retencionRenta">{{ formato === 'F606' ? 'Retención renta' : 'Retención renta por terceros' }}</label>
+                        <label for="f-propinaLegal">Propina legal</label>
                       </div>
-                      <InputNumber id="f-retencionRenta" v-model="form.retencionRenta" mode="currency" currency="DOP" locale="es-DO" fluid />
+                      <InputNumber
+                        id="f-propinaLegal"
+                        v-model="form.propinaLegal"
+                        mode="currency"
+                        currency="DOP"
+                        locale="es-DO"
+                        fluid
+                      />
                     </div>
                     <div class="campo">
-                      <div class="campo__cabecera"><label for="f-isrPercibido">ISR percibido</label></div>
-                      <InputNumber id="f-isrPercibido" v-model="form.isrPercibido" mode="currency" currency="DOP" locale="es-DO" fluid />
+                      <div class="campo__cabecera">
+                        <label for="f-itbisRetenido">{{
+                          formato === "F606"
+                            ? "ITBIS retenido"
+                            : "ITBIS retenido por terceros"
+                        }}</label>
+                      </div>
+                      <InputNumber
+                        id="f-itbisRetenido"
+                        v-model="form.itbisRetenido"
+                        mode="currency"
+                        currency="DOP"
+                        locale="es-DO"
+                        fluid
+                      />
+                    </div>
+                    <div class="campo">
+                      <div class="campo__cabecera">
+                        <label for="f-retencionRenta">{{
+                          formato === "F606"
+                            ? "Retención renta"
+                            : "Retención renta por terceros"
+                        }}</label>
+                      </div>
+                      <InputNumber
+                        id="f-retencionRenta"
+                        v-model="form.retencionRenta"
+                        mode="currency"
+                        currency="DOP"
+                        locale="es-DO"
+                        fluid
+                      />
+                    </div>
+                    <div class="campo">
+                      <div class="campo__cabecera">
+                        <label for="f-isrPercibido">ISR percibido</label>
+                      </div>
+                      <InputNumber
+                        id="f-isrPercibido"
+                        v-model="form.isrPercibido"
+                        mode="currency"
+                        currency="DOP"
+                        locale="es-DO"
+                        fluid
+                      />
                     </div>
 
                     <template v-if="formato === 'F606'">
                       <div class="campo">
-                        <div class="campo__cabecera"><label for="f-montoServicios">Servicios</label></div>
-                        <InputNumber id="f-montoServicios" v-model="form.montoServicios" mode="currency" currency="DOP" locale="es-DO" fluid />
+                        <div class="campo__cabecera">
+                          <label for="f-montoServicios">Servicios</label>
+                        </div>
+                        <InputNumber
+                          id="f-montoServicios"
+                          v-model="form.montoServicios"
+                          mode="currency"
+                          currency="DOP"
+                          locale="es-DO"
+                          fluid
+                        />
                       </div>
                       <div class="campo">
-                        <div class="campo__cabecera"><label for="f-montoBienes">Bienes</label></div>
-                        <InputNumber id="f-montoBienes" v-model="form.montoBienes" mode="currency" currency="DOP" locale="es-DO" fluid />
+                        <div class="campo__cabecera">
+                          <label for="f-montoBienes">Bienes</label>
+                        </div>
+                        <InputNumber
+                          id="f-montoBienes"
+                          v-model="form.montoBienes"
+                          mode="currency"
+                          currency="DOP"
+                          locale="es-DO"
+                          fluid
+                        />
                       </div>
                     </template>
 
                     <template v-else-if="formato === 'F607'">
-                      <div class="campo campo--ancho separador">Forma de venta</div>
-                      <div class="campo">
-                        <div class="campo__cabecera"><label for="f-montoEfectivo">Efectivo</label></div>
-                        <InputNumber id="f-montoEfectivo" v-model="form.montoEfectivo" mode="currency" currency="DOP" locale="es-DO" fluid />
+                      <div class="campo campo--ancho separador" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px">
+                        <span>Forma de venta (DGII 607)</span>
+                        <div style="display: flex; gap: 6px; flex-wrap: wrap">
+                          <button
+                            type="button"
+                            class="btn-forma-rapida"
+                            @click="autoDistribuirFormaVenta('CREDITO')"
+                            title="Distribuir el total a Crédito"
+                          >
+                            100% Crédito
+                          </button>
+                          <button
+                            type="button"
+                            class="btn-forma-rapida"
+                            @click="autoDistribuirFormaVenta('EFECTIVO')"
+                            title="Distribuir el total a Efectivo"
+                          >
+                            100% Efectivo
+                          </button>
+                          <button
+                            type="button"
+                            class="btn-forma-rapida"
+                            @click="autoDistribuirFormaVenta('TRANSFERENCIA')"
+                            title="Distribuir el total a Transferencia"
+                          >
+                            100% Transferencia
+                          </button>
+                          <button
+                            type="button"
+                            class="btn-forma-rapida"
+                            @click="autoDistribuirFormaVenta('TARJETA')"
+                            title="Distribuir el total a Tarjeta"
+                          >
+                            100% Tarjeta
+                          </button>
+                        </div>
                       </div>
                       <div class="campo">
-                        <div class="campo__cabecera"><label for="f-montoChequeTransferencia">Cheque / transferencia</label></div>
+                        <div class="campo__cabecera">
+                          <label for="f-montoEfectivo">Efectivo</label>
+                        </div>
+                        <InputNumber
+                          id="f-montoEfectivo"
+                          v-model="form.montoEfectivo"
+                          mode="currency"
+                          currency="DOP"
+                          locale="es-DO"
+                          fluid
+                        />
+                      </div>
+                      <div class="campo">
+                        <div class="campo__cabecera">
+                          <label for="f-montoChequeTransferencia"
+                            >Cheque / transferencia</label
+                          >
+                        </div>
                         <InputNumber
                           id="f-montoChequeTransferencia"
                           v-model="form.montoChequeTransferencia"
@@ -889,11 +1409,24 @@ onUnmounted(() => {
                         />
                       </div>
                       <div class="campo">
-                        <div class="campo__cabecera"><label for="f-montoTarjeta">Tarjeta</label></div>
-                        <InputNumber id="f-montoTarjeta" v-model="form.montoTarjeta" mode="currency" currency="DOP" locale="es-DO" fluid />
+                        <div class="campo__cabecera">
+                          <label for="f-montoTarjeta">Tarjeta</label>
+                        </div>
+                        <InputNumber
+                          id="f-montoTarjeta"
+                          v-model="form.montoTarjeta"
+                          mode="currency"
+                          currency="DOP"
+                          locale="es-DO"
+                          fluid
+                        />
                       </div>
                       <div class="campo">
-                        <div class="campo__cabecera"><label for="f-montoVentaCredito">Venta a crédito</label></div>
+                        <div class="campo__cabecera">
+                          <label for="f-montoVentaCredito"
+                            >Venta a crédito</label
+                          >
+                        </div>
                         <InputNumber
                           id="f-montoVentaCredito"
                           v-model="form.montoVentaCredito"
@@ -904,15 +1437,35 @@ onUnmounted(() => {
                         />
                       </div>
                       <div class="campo">
-                        <div class="campo__cabecera"><label for="f-montoBonos">Bonos</label></div>
-                        <InputNumber id="f-montoBonos" v-model="form.montoBonos" mode="currency" currency="DOP" locale="es-DO" fluid />
+                        <div class="campo__cabecera">
+                          <label for="f-montoBonos">Bonos</label>
+                        </div>
+                        <InputNumber
+                          id="f-montoBonos"
+                          v-model="form.montoBonos"
+                          mode="currency"
+                          currency="DOP"
+                          locale="es-DO"
+                          fluid
+                        />
                       </div>
                       <div class="campo">
-                        <div class="campo__cabecera"><label for="f-montoPermuta">Permuta</label></div>
-                        <InputNumber id="f-montoPermuta" v-model="form.montoPermuta" mode="currency" currency="DOP" locale="es-DO" fluid />
+                        <div class="campo__cabecera">
+                          <label for="f-montoPermuta">Permuta</label>
+                        </div>
+                        <InputNumber
+                          id="f-montoPermuta"
+                          v-model="form.montoPermuta"
+                          mode="currency"
+                          currency="DOP"
+                          locale="es-DO"
+                          fluid
+                        />
                       </div>
                       <div class="campo">
-                        <div class="campo__cabecera"><label for="f-montoOtrasFormas">Otras formas</label></div>
+                        <div class="campo__cabecera">
+                          <label for="f-montoOtrasFormas">Otras formas</label>
+                        </div>
                         <InputNumber
                           id="f-montoOtrasFormas"
                           v-model="form.montoOtrasFormas"
@@ -928,7 +1481,10 @@ onUnmounted(() => {
 
                 <!-- ── Líneas ── -->
                 <TabPanel value="lineas">
-                  <p v-if="!factura.lineas?.length" class="estado estado--suave">
+                  <p
+                    v-if="!factura.lineas?.length"
+                    class="estado estado--suave"
+                  >
                     El extractor no detectó líneas de detalle en este documento.
                   </p>
                   <table v-else class="lineas">
@@ -957,7 +1513,12 @@ onUnmounted(() => {
           <div class="resumenes">
             <TarjetaPanel titulo="Totales">
               <div class="totales">
-                <div v-for="t in totales" :key="t.label" class="total" :class="{ 'total--fuerte': t.fuerte }">
+                <div
+                  v-for="t in totales"
+                  :key="t.label"
+                  class="total"
+                  :class="{ 'total--fuerte': t.fuerte }"
+                >
                   <span class="total__label">{{ t.label }}</span>
                   <span class="total__valor">RD$ {{ t.valor }}</span>
                 </div>
@@ -965,18 +1526,32 @@ onUnmounted(() => {
             </TarjetaPanel>
 
             <TarjetaPanel titulo="Validaciones DGII">
-              <p v-if="!factura.validaciones.length" class="estado estado--suave">
+              <p
+                v-if="!factura.validaciones.length"
+                class="estado estado--suave"
+              >
                 Sin observaciones. La factura cumple las reglas de la DGII.
               </p>
               <div
                 v-for="v in factura.validaciones"
                 :key="v.id"
                 class="validacion"
-                :class="v.severidad === 'ERROR' ? 'validacion--error' : 'validacion--alerta'"
+                :class="
+                  v.severidad === 'ERROR'
+                    ? 'validacion--error'
+                    : 'validacion--alerta'
+                "
+                style="cursor: pointer"
+                title="Haz clic para ir al campo o pestaña correspondiente"
+                @click="irACampoValidacion(v)"
               >
                 <i
                   class="pi"
-                  :class="v.severidad === 'ERROR' ? 'pi-times-circle' : 'pi-exclamation-triangle'"
+                  :class="
+                    v.severidad === 'ERROR'
+                      ? 'pi-times-circle'
+                      : 'pi-exclamation-triangle'
+                  "
                 ></i>
                 <div class="validacion__texto">
                   <span class="validacion__codigo">{{ v.codigo }}</span>
@@ -988,9 +1563,56 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <Drawer v-model:visible="verOcr" position="right" header="Texto OCR y diagnóstico" class="cajon">
-        <PanelDiagnostico v-if="factura.documento" :documento-id="factura.documento.id" />
+      <Drawer
+        v-model:visible="verOcr"
+        position="right"
+        header="Texto OCR y diagnóstico"
+        class="cajon"
+      >
+        <PanelDiagnostico
+          v-if="factura.documento"
+          :documento-id="factura.documento.id"
+        />
       </Drawer>
+      <!-- Modal Alta Rápida de Cliente -->
+      <Dialog
+        v-model:visible="modalCliente"
+        modal
+        :header="`Registrar ${nuevoCliente.rol === 'EMISOR' ? 'Emisor' : 'Receptor'} en Maestro de Clientes`"
+        :style="{ width: '440px' }"
+      >
+        <div style="display: flex; flex-direction: column; gap: 14px; padding-top: 6px">
+          <div>
+            <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px">RNC / Cédula</label>
+            <InputText v-model="nuevoCliente.rnc" placeholder="RNC o Cédula" fluid />
+          </div>
+          <div>
+            <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px">Nombre Comercial / Razón Social (Mayúsculas)</label>
+            <InputText v-model="nuevoCliente.nombre" placeholder="Nombre en mayúsculas" fluid />
+          </div>
+          <div>
+            <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px">Tipo de Ingreso por defecto (607)</label>
+            <Select
+              v-model="nuevoCliente.tipoIngresoDefault"
+              :options="catalogos.catalogos.tiposIngreso607"
+              option-label="descripcion"
+              option-value="codigo"
+              placeholder="01 - Ingresos por Operaciones"
+              fluid
+            />
+          </div>
+        </div>
+        <template #footer>
+          <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px">
+            <Button label="Cancelar" text severity="secondary" @click="modalCliente = false" />
+            <Button
+              label="Guardar y reclasificar"
+              :loading="guardandoClienteModal"
+              @click="guardarClienteModal"
+            />
+          </div>
+        </template>
+      </Dialog>
     </template>
   </AppLayout>
 </template>
@@ -1048,7 +1670,7 @@ onUnmounted(() => {
 .cabecera__titulo h1 {
   margin: 0;
   font-size: 21px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.4px;
 }
 .cabecera__sub {
@@ -1072,12 +1694,13 @@ onUnmounted(() => {
    ir ajustando un alto en píxeles a mano. */
 .cuerpo {
   display: grid;
-  grid-template-columns: 3fr 2fr;
+  grid-template-columns: 55% 40%;
   gap: 14px;
   align-items: stretch;
   flex: 1;
   min-height: 0;
   padding: 14px 22px 18px;
+  justify-content: space-between;
 }
 .derecha {
   display: flex;
@@ -1109,7 +1732,7 @@ onUnmounted(() => {
 }
 .panel__titulo {
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
 }
 .panel__pie {
   display: flex;
@@ -1146,12 +1769,103 @@ onUnmounted(() => {
   padding: 0;
   font: inherit;
   color: var(--teal);
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
   font-size: 11.5px;
 }
 .enlace:hover {
   text-decoration: underline;
+}
+
+/* ── Barra de Clasificación Contable Rápida ── */
+.barra-clasificacion {
+  background: var(--superficie-suave, #f8fafc);
+  border-bottom: 1px solid var(--borde);
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.barra-clasificacion__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.barra-clasificacion__titulo {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--texto-suave);
+}
+.banner-ia {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #f0fdf4;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.banner-ia i {
+  color: #22c55e;
+  font-size: 11px;
+}
+.botones-operacion {
+  display: flex;
+  gap: 8px;
+}
+.btn-op {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--borde);
+  background: var(--superficie);
+  color: var(--texto-suave);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-op:hover {
+  background: var(--superficie-hover, #f1f5f9);
+  border-color: var(--borde-fuerte, #cbd5e1);
+  color: var(--texto);
+}
+.btn-op--activo {
+  background: var(--teal, #0f766e) !important;
+  color: #ffffff !important;
+  border-color: var(--teal, #0f766e) !important;
+  box-shadow: 0 1px 3px rgba(15, 118, 110, 0.25);
+}
+.btn-crear-cliente-inline {
+  background: transparent;
+  border: 1px dashed var(--teal, #0f766e);
+  color: var(--teal, #0f766e);
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+.btn-crear-cliente-inline:hover {
+  background: var(--teal-fondo, #f0fdfa);
 }
 
 /* ── Clasificación pendiente ── */
@@ -1201,7 +1915,7 @@ onUnmounted(() => {
 :deep(.p-tab) {
   padding: 12px 12px 10px;
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--texto-tenue);
   border-color: transparent;
 }
@@ -1243,13 +1957,13 @@ onUnmounted(() => {
 }
 .campo__cabecera label {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--texto-suave);
   letter-spacing: 0.2px;
 }
 .separador {
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--texto-suave);
   border-top: 1px solid var(--borde-tenue);
   padding-top: 10px;
@@ -1282,7 +1996,7 @@ onUnmounted(() => {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--texto-debil);
-  font-weight: 700;
+  font-weight: 600;
   border-bottom: 1px solid var(--borde-tenue);
   background: var(--superficie-tenue);
 }
@@ -1295,7 +2009,7 @@ onUnmounted(() => {
   text-align: right;
 }
 .fuerte {
-  font-weight: 700;
+  font-weight: 600;
   color: var(--texto);
 }
 
@@ -1323,7 +2037,7 @@ onUnmounted(() => {
   color: var(--texto-suave);
 }
 .total__valor {
-  font-weight: 700;
+  font-weight: 600;
   color: var(--texto);
 }
 .total--fuerte {
@@ -1332,7 +2046,7 @@ onUnmounted(() => {
 }
 .total--fuerte .total__label {
   color: var(--texto);
-  font-weight: 700;
+  font-weight: 600;
 }
 .total--fuerte .total__valor {
   font-size: 16px;
@@ -1368,7 +2082,7 @@ onUnmounted(() => {
 }
 .validacion__codigo {
   font-size: 11.5px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--texto);
 }
 .validacion__mensaje {
@@ -1396,7 +2110,9 @@ onUnmounted(() => {
   }
 }
 
-.herramienta-movil { display: none; }
+.herramienta-movil {
+  display: none;
+}
 
 @media (max-width: 768px) {
   .cabecera {
@@ -1602,6 +2318,23 @@ onUnmounted(() => {
   .alerta-rnc > i {
     font-size: 10.5px;
   }
+}
+
+.btn-forma-rapida {
+  background: #f1f5f9;
+  color: #1e40af;
+  border: 1px solid #cbd5e1;
+  padding: 3px 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-forma-rapida:hover {
+  background: #2563eb;
+  color: #ffffff;
+  border-color: #2563eb;
 }
 </style>
 

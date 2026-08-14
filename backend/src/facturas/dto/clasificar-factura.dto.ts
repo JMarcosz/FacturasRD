@@ -1,4 +1,5 @@
-import { IsIn, IsUUID } from 'class-validator';
+import { IsEnum, IsIn, IsOptional, IsUUID } from 'class-validator';
+import { ClasificacionOperacion } from '@prisma/client';
 
 export class ClasificarFacturaDto {
   @IsUUID()
@@ -6,4 +7,8 @@ export class ClasificarFacturaDto {
 
   @IsIn(['F606', 'F607'])
   formato!: 'F606' | 'F607';
+
+  @IsOptional()
+  @IsEnum(ClasificacionOperacion)
+  clasificacionOperacion?: ClasificacionOperacion;
 }

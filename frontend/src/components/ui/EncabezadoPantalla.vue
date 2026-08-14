@@ -30,7 +30,7 @@ defineProps<{ titulo: string; subtitulo?: string }>();
 .encabezado__texto h1 {
   margin: 0;
   font-size: 22px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.4px;
 }
 .encabezado__texto p {

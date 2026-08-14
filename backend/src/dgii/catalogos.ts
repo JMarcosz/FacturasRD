@@ -13,7 +13,10 @@ export const TIPOS_IDENTIFICACION: readonly EntradaCatalogo[] = [
 
 /** Tipo de Ingreso — Formato 607 (Ventas). */
 export const TIPOS_INGRESO_607: readonly EntradaCatalogo[] = [
-  { codigo: '01', descripcion: 'Ingresos por operaciones (normales de su actividad)' },
+  {
+    codigo: '01',
+    descripcion: 'Ingresos por operaciones (normales de su actividad)',
+  },
   { codigo: '02', descripcion: 'Ingresos financieros' },
   { codigo: '03', descripcion: 'Ingresos extraordinarios' },
   { codigo: '04', descripcion: 'Ingresos por arrendamientos' },
@@ -56,6 +59,7 @@ export const FORMAS_PAGO_606: readonly EntradaCatalogo[] = [
  * completamente falso.
  */
 export const TIPOS_NCF: readonly EntradaCatalogo[] = [
+  // --- NCF Tradicionales ---
   { codigo: '01', descripcion: 'Crédito Fiscal' },
   { codigo: '02', descripcion: 'Consumo' },
   { codigo: '03', descripcion: 'Nota de Débito' },
@@ -67,22 +71,30 @@ export const TIPOS_NCF: readonly EntradaCatalogo[] = [
   { codigo: '15', descripcion: 'Gubernamental' },
   { codigo: '16', descripcion: 'Exportaciones' },
   { codigo: '17', descripcion: 'Pagos al Exterior' },
+
+  // --- e-NCF Electrónicos ---
   { codigo: '31', descripcion: 'Factura de Crédito Fiscal Electrónica' },
   { codigo: '32', descripcion: 'Factura de Consumo Electrónica' },
   { codigo: '33', descripcion: 'Nota de Débito Electrónica' },
   { codigo: '34', descripcion: 'Nota de Crédito Electrónica' },
-  { codigo: '41', descripcion: 'Comprobante Electrónico de Compras' },
-  { codigo: '43', descripcion: 'Comprobante Electrónico para Gastos Menores' },
-  { codigo: '44', descripcion: 'Comprobante Electrónico para Regímenes Especiales de Tributación' },
-  { codigo: '45', descripcion: 'Comprobante Electrónico Gubernamental' },
-  { codigo: '46', descripcion: 'Comprobante Electrónico para Exportaciones' },
-  { codigo: '47', descripcion: 'Comprobante Electrónico para Pagos al Exterior' },
+  { codigo: '41', descripcion: 'Compras Electrónicas' },
+  { codigo: '43', descripcion: 'Gastos Menores Electrónico' },
+  { codigo: '44', descripcion: 'Regímenes Especiales Electrónico' },
+  { codigo: '45', descripcion: 'Gubernamental Electrónico' },
+  { codigo: '46', descripcion: 'Exportaciones Electrónicas' },
+  { codigo: '47', descripcion: 'Pagos al Exterior Electrónico' },
 ] as const;
 
 /** Tipos de NCF que representan notas de crédito y por tanto exigen "NCF Modificado". */
-export const TIPOS_NCF_NOTA_CREDITO: ReadonlySet<string> = new Set(['04', '34']);
+export const TIPOS_NCF_NOTA_CREDITO: ReadonlySet<string> = new Set([
+  '04',
+  '34',
+]);
 
-function buscar(catalogo: readonly EntradaCatalogo[], codigo: string): EntradaCatalogo | undefined {
+function buscar(
+  catalogo: readonly EntradaCatalogo[],
+  codigo: string,
+): EntradaCatalogo | undefined {
   return catalogo.find((e) => e.codigo === codigo);
 }
 

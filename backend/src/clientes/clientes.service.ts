@@ -1,8 +1,10 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { OrigenCliente, Prisma } from '@prisma/client';
+import { BadRequestException, ConflictException, forwardRef, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ClasificacionOperacion, OrigenCliente, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
-import { esTipoIngresoValido, normalizarIdentificacion, validarRnc } from '../dgii';
+import { esTipoIngresoValido, normalizarIdentificacion, sonNombresComercialesEquivalentes, validarRnc } from '../dgii';
 import { ProcesadorService } from '../extraccion/procesador.service';
+import { ClasificadorCostoGastoService } from '../extraccion/clasificador-costo-gasto.service';
+import { SugerenciasService } from '../sugerencias/sugerencias.service';
 import { CreateClienteDto } from './dto/create-cliente.dto';
 import { UpdateClienteDto } from './dto/update-cliente.dto';
 import { ImportarClienteRowDto } from './dto/importar-clientes.dto';
@@ -22,9 +24,14 @@ function sonCasiIguales(a: string, b: string): boolean {
 
 @Injectable()
 export class ClientesService {
+  private readonly logger = new Logger(ClientesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => ProcesadorService))
     private readonly procesador: ProcesadorService,
+    private readonly costoGastoIa: ClasificadorCostoGastoService,
+    private readonly sugerenciasService: SugerenciasService,
   ) {}
 
   private validarCamposFiscales(rnc: string, tipoIngresoDefault?: string | null, tolerarRncInvalido = false) {
@@ -37,28 +44,66 @@ export class ClientesService {
   }
 
   /**
-   * El dígito verificador no bloquea el alta: falla a menudo en RNC recién
-   * OCR-eados y el alta desde el flujo (dar de alta el comercio detectado en
-   * una factura) es justo donde más se usa. Se crea igual, marcado con
-   * `rncVerificado: false` para que la pantalla lo señale y el contador lo
-   * corrija — rechazarlo dejaba sin salida al caso que esto viene a resolver.
-   * El Tipo de Ingreso sí se valida: ese sí es un catálogo cerrado.
+   * Crea un nuevo cliente en el Maestro de Clientes.
+   * - El nombre se almacena SIEMPRE normalizado en MAYÚSCULAS.
+   * - El RNC se almacena normalizado en dígitos.
+   * - Marca sugerencias coincidentes como CREADO.
+   * - Dispara la reclasificación automática de facturas pendientes compatibles sin reprocesar imágenes.
    */
   async create(dto: CreateClienteDto) {
     const rnc = normalizarIdentificacion(dto.rnc);
+    const nombre = dto.nombre.trim().toUpperCase();
     this.validarCamposFiscales(rnc, dto.tipoIngresoDefault, true);
 
     try {
-      return await this.prisma.cliente.create({
-        data: {
-          rnc,
-          nombre: dto.nombre,
-          tipoIngresoDefault: dto.tipoIngresoDefault ?? null,
-          tasaItbis: dto.tasaItbis ?? 0.18,
-          aplicaProporcionalidad: dto.aplicaProporcionalidad ?? false,
-          rncVerificado: validarRnc(rnc),
-        },
+      const existente = await this.prisma.cliente.findUnique({
+        where: { rnc },
       });
+
+      let cliente;
+      if (existente) {
+        if (existente.activo) {
+          throw new ConflictException(`Ya existe un cliente con el RNC "${rnc}" (${existente.nombre}).`);
+        }
+        // Si existía pero estaba inactivo/descartado, reactivarlo y actualizarlo con los nuevos datos
+        cliente = await this.prisma.cliente.update({
+          where: { id: existente.id },
+          data: {
+            nombre,
+            tipoIngresoDefault: dto.tipoIngresoDefault ?? null,
+            tasaItbis: dto.tasaItbis ?? 0.18,
+            aplicaProporcionalidad: dto.aplicaProporcionalidad ?? false,
+            rncVerificado: validarRnc(rnc),
+            activo: true,
+            confirmado: true,
+            origen: OrigenCliente.MANUAL,
+          },
+        });
+      } else {
+        cliente = await this.prisma.cliente.create({
+          data: {
+            rnc,
+            nombre,
+            tipoIngresoDefault: dto.tipoIngresoDefault ?? null,
+            tasaItbis: dto.tasaItbis ?? 0.18,
+            aplicaProporcionalidad: dto.aplicaProporcionalidad ?? false,
+            rncVerificado: validarRnc(rnc),
+            activo: true,
+            confirmado: true,
+            origen: OrigenCliente.MANUAL,
+          },
+        });
+      }
+
+      // Actualizar sugerencias persistentes a estado CREADO
+      await this.sugerenciasService.marcarComoCreado(rnc, nombre);
+
+      // Reclasificación automática retroactiva de facturas sin cliente / pendientes
+      this.reclasificarFacturas(cliente.id).catch((err) => {
+        this.logger.error(`Error en reclasificación automática para cliente ${cliente.id}: ${err.message}`);
+      });
+
+      return cliente;
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         throw new ConflictException(`Ya existe un cliente con el RNC "${rnc}".`);
@@ -84,26 +129,34 @@ export class ClientesService {
     await this.findOne(id);
 
     const rnc = dto.rnc ? normalizarIdentificacion(dto.rnc) : undefined;
-    // Misma tolerancia que en `create`: corregir a mano un RNC mal leído es
-    // precisamente cómo se sale de un `rncVerificado: false`, así que el
-    // dígito verificador no puede impedir la edición — solo se re-evalúa.
+    const nombre = dto.nombre !== undefined ? dto.nombre.trim().toUpperCase() : undefined;
+
     if (rnc) this.validarCamposFiscales(rnc, dto.tipoIngresoDefault, true);
     else if (dto.tipoIngresoDefault && !esTipoIngresoValido(dto.tipoIngresoDefault)) {
       throw new BadRequestException(`"${dto.tipoIngresoDefault}" no es un Tipo de Ingreso válido.`);
     }
 
     try {
-      return await this.prisma.cliente.update({
+      const actualizado = await this.prisma.cliente.update({
         where: { id },
         data: {
           ...(rnc ? { rnc, rncVerificado: validarRnc(rnc) } : {}),
-          ...(dto.nombre !== undefined ? { nombre: dto.nombre } : {}),
+          ...(nombre !== undefined ? { nombre } : {}),
           ...(dto.tipoIngresoDefault !== undefined ? { tipoIngresoDefault: dto.tipoIngresoDefault } : {}),
           ...(dto.tasaItbis !== undefined ? { tasaItbis: dto.tasaItbis } : {}),
           ...(dto.aplicaProporcionalidad !== undefined ? { aplicaProporcionalidad: dto.aplicaProporcionalidad } : {}),
           ...(dto.activo !== undefined ? { activo: dto.activo } : {}),
         },
       });
+
+      if (rnc || nombre) {
+        await this.sugerenciasService.marcarComoCreado(actualizado.rnc, actualizado.nombre);
+        this.reclasificarFacturas(actualizado.id).catch((err) => {
+          this.logger.error(`Error en reclasificación tras update para cliente ${id}: ${err.message}`);
+        });
+      }
+
+      return actualizado;
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         throw new ConflictException(`Ya existe un cliente con el RNC "${rnc}".`);
@@ -126,64 +179,69 @@ export class ClientesService {
       throw new BadRequestException(`"${tipoIngresoDefault}" no es un Tipo de Ingreso válido.`);
     }
 
-    return this.prisma.cliente.update({
+    const confirmado = await this.prisma.cliente.update({
       where: { id },
       data: {
         confirmado: true,
-        ...(tipoIngresoDefault ? { tipoIngresoDefault } : {}),
+        nombre: cliente.nombre.trim().toUpperCase(),
+        ...(tipoIngresoDefault !== undefined ? { tipoIngresoDefault } : {}),
       },
     });
+
+    await this.sugerenciasService.marcarComoCreado(confirmado.rnc, confirmado.nombre);
+    await this.reclasificarFacturas(id);
+
+    return confirmado;
   }
 
-  /** Descarta un cliente auto-detectado (lo desactiva). */
+  /** Desactiva un cliente */
   async descartar(id: string) {
-    const cliente = await this.findOne(id);
-    if (cliente.origen !== 'AUTO') {
-      throw new BadRequestException('Solo se pueden descartar clientes auto-detectados.');
-    }
-    return this.prisma.cliente.update({
-      where: { id },
-      data: { activo: false },
-    });
+    await this.findOne(id);
+    return this.prisma.cliente.update({ where: { id }, data: { activo: false } });
   }
 
   /**
-   * Devuelve grupos de RNC «casi duplicados» — diferencia de un solo dígito,
-   * mismo nombre. Útil para detectar errores de OCR.
+   * Busca clientes que podrían ser el mismo pero quedaron separados.
    */
-  async detectarDuplicados(): Promise<Array<{ rncs: string[]; nombre: string; ids: string[] }>> {
+  async detectarDuplicados() {
     const clientes = await this.prisma.cliente.findMany({
       where: { activo: true },
-      select: { id: true, rnc: true, nombre: true },
-      orderBy: { nombre: 'asc' },
+      orderBy: { createdAt: 'asc' },
     });
 
-    const grupos: Array<{ rncs: string[]; nombre: string; ids: string[] }> = [];
-    const yaPareados = new Set<string>();
+    const grupos: Array<{
+      principal: (typeof clientes)[0];
+      duplicados: (typeof clientes)[0];
+      motivo: string;
+    }> = [];
+
+    const yaAgrupados = new Set<string>();
 
     for (let i = 0; i < clientes.length; i++) {
-      if (yaPareados.has(clientes[i].id)) continue;
-      const grupo = [clientes[i]];
+      const a = clientes[i];
+      if (yaAgrupados.has(a.id)) continue;
 
       for (let j = i + 1; j < clientes.length; j++) {
-        if (yaPareados.has(clientes[j].id)) continue;
-        if (
-          sonCasiIguales(clientes[i].rnc, clientes[j].rnc) ||
-          (clientes[i].nombre.toLowerCase() === clientes[j].nombre.toLowerCase() &&
-            clientes[i].rnc !== clientes[j].rnc)
-        ) {
-          grupo.push(clientes[j]);
-          yaPareados.add(clientes[j].id);
-        }
-      }
+        const b = clientes[j];
+        if (yaAgrupados.has(b.id)) continue;
 
-      if (grupo.length > 1) {
-        yaPareados.add(clientes[i].id);
-        grupos.push({
-          rncs: grupo.map((c) => c.rnc),
-          nombre: grupo[0].nombre,
-          ids: grupo.map((c) => c.id),
-        });
+        let motivo = '';
+        if (sonCasiIguales(a.rnc, b.rnc)) {
+          motivo = `RNC casi idéntico: ${a.rnc} vs ${b.rnc}`;
+        } else if (
+          a.nombre.length >= 4 &&
+          b.nombre.length >= 4 &&
+          a.nombre.trim().toUpperCase() === b.nombre.trim().toUpperCase()
+        ) {
+          motivo = `Mismo nombre: "${a.nombre}" con distinto RNC (${a.rnc} vs ${b.rnc})`;
+        }
+
+        if (motivo) {
+          const principal = a.confirmado && !b.confirmado ? a : !a.confirmado && b.confirmado ? b : a;
+          const duplicado = principal.id === a.id ? b : a;
+          grupos.push({ principal, duplicados: duplicado, motivo });
+          yaAgrupados.add(duplicado.id);
+        }
       }
     }
 
@@ -191,115 +249,182 @@ export class ClientesService {
   }
 
   /**
-   * Fusiona dos o más clientes en uno solo: el primero se queda, los demás
-   * transfieren sus facturas y períodos al primero y se desactivan.
-   *
-   * Además reclasifica las facturas sueltas que traían el RNC de los
-   * secundarios. Sin ese paso la fusión dejaba un agujero permanente: al
-   * desactivarse el cliente secundario ya nadie tiene ese RNC, así que sus
-   * facturas sin clasificar no podían volver a engancharse con ningún
-   * contribuyente — justo el 607 partido en dos que la fusión viene a evitar.
+   * Fusiona `duplicados` dentro de `principalId`.
    */
-  async fusionar(idPrincipal: string, idsSecundarios: string[]) {
-    const principal = await this.findOne(idPrincipal);
-    if (idsSecundarios.includes(idPrincipal)) {
-      throw new BadRequestException('El cliente principal no puede estar también entre los secundarios.');
-    }
-
-    const rncsSecundarios: string[] = [];
-    for (const id of idsSecundarios) {
-      const secundario = await this.findOne(id);
-      rncsSecundarios.push(secundario.rnc);
-      await this.prisma.$transaction([
-        this.prisma.factura.updateMany({ where: { clienteId: id }, data: { clienteId: idPrincipal } }),
-        this.prisma.periodo.updateMany({ where: { clienteId: id }, data: { clienteId: idPrincipal } }),
-        this.prisma.cliente.update({ where: { id }, data: { activo: false } }),
-        // El RNC absorbido queda como alias del sobreviviente: así la próxima
-        // factura que el OCR vuelva a leer con ese dígito equivocado se
-        // clasifica sola, en vez de quedar huérfana porque su cliente ya no
-        // existe. La fusión no solo repara el pasado, enseña para el futuro.
-        this.prisma.clienteRncAlias.upsert({
-          where: { rnc: secundario.rnc },
-          update: { clienteId: idPrincipal },
-          create: { rnc: secundario.rnc, clienteId: idPrincipal, motivo: 'fusión de duplicados' },
-        }),
+  async fusionar(principalId: string, duplicados: string | string[]) {
+    const ids = Array.isArray(duplicados) ? duplicados : [duplicados];
+    for (const dupId of ids) {
+      if (principalId === dupId) {
+        throw new BadRequestException('No puedes fusionar un cliente consigo mismo.');
+      }
+      const [principal, duplicado] = await Promise.all([
+        this.findOne(principalId),
+        this.findOne(dupId),
       ]);
+
+      await this.prisma.$transaction(async (tx) => {
+        await tx.clienteRncAlias.upsert({
+          where: { rnc: duplicado.rnc },
+          update: { clienteId: principal.id },
+          create: { rnc: duplicado.rnc, clienteId: principal.id },
+        });
+
+        await tx.factura.updateMany({
+          where: { clienteId: duplicado.id },
+          data: { clienteId: principal.id },
+        });
+
+        await tx.periodo.updateMany({
+          where: { clienteId: duplicado.id },
+          data: { clienteId: principal.id },
+        });
+
+        await tx.cliente.update({
+          where: { id: duplicado.id },
+          data: { activo: false },
+        });
+      });
     }
 
-    let absorbidas = 0;
-    for (const rnc of rncsSecundarios) {
-      const resultado = await this.reclasificarPorRncs(idPrincipal, [rnc]);
-      absorbidas += resultado.reclasificadas;
-    }
-
-    return { ...principal, absorbidas };
+    return this.reclasificarFacturas(principalId);
   }
 
   /**
-   * Reclasifica todas las facturas no clasificadas cuyos RNC (emisor o receptor)
-   * coincidan con el RNC de este cliente. Es lo que desbloquea el atasco:
-   * confirmar un cliente y ejecutar esto clasifica todas sus facturas de golpe.
+   * Reclasificación Automática Retroactiva de Facturas:
+   * Busca todas las facturas sin clasificar (o en estado PENDIENTE) cuyo emisor o receptor
+   * coincida con el RNC o el Nombre en MAYÚSCULAS de este cliente.
+   * - Emisor coincide -> INGRESO (F607, tipoIngreso='01')
+   * - Receptor coincide -> COSTO o GASTO (F606, evaluado con IA sobre las líneas)
+   * Reutiliza los datos ya extraídos sin volver a llamar al OCR de imágenes.
    */
   async reclasificarFacturas(clienteId: string) {
     const cliente = await this.findOne(clienteId);
     if (!cliente.activo) {
       throw new BadRequestException('El cliente está desactivado: reactívalo antes de reclasificar.');
     }
-    // Ya no se exige `confirmado`: el clasificador tampoco lo exige, y pedirlo
-    // aquí impedía reenganchar las facturas de un contribuyente recién
-    // detectado, que es cuando más falta hace.
-    const alias = await this.prisma.clienteRncAlias.findMany({ where: { clienteId }, select: { rnc: true } });
-    return this.reclasificarPorRncs(clienteId, [cliente.rnc, ...alias.map((a) => a.rnc)]);
-  }
 
-  /**
-   * Engancha al cliente indicado toda factura sin clasificar cuyo emisor o
-   * receptor esté en `rncs`. Emisor → 607 (se la vendió él); receptor → 606
-   * (se la compró él).
-   *
-   * Toma varios RNC porque tras una fusión el mismo contribuyente responde por
-   * el RNC bueno y por el mal leído.
-   */
-  private async reclasificarPorRncs(clienteId: string, rncs: string[]) {
-    const objetivo = new Set(rncs.map((r) => normalizarIdentificacion(r)).filter(Boolean));
-
-    const todasSinClasificar = await this.prisma.factura.findMany({
-      where: { clienteId: null },
-      select: { id: true, identificacionEmisor: true, identificacionReceptor: true },
+    const alias = await this.prisma.clienteRncAlias.findMany({
+      where: { clienteId },
+      select: { rnc: true },
     });
 
-    const facturasAProcesar = todasSinClasificar.filter(
-      (f) =>
-        objetivo.has(normalizarIdentificacion(f.identificacionEmisor ?? '')) ||
-        objetivo.has(normalizarIdentificacion(f.identificacionReceptor ?? '')),
-    );
+    const rncsObjetivo = new Set([cliente.rnc, ...alias.map((a) => a.rnc)].map((r) => normalizarIdentificacion(r)).filter(Boolean));
+    const nombreObjetivo = cliente.nombre.trim().toUpperCase();
+
+    // Buscar facturas sin cliente asignado o con clasificación PENDIENTE
+    const facturasPendientes = await this.prisma.factura.findMany({
+      where: {
+        OR: [
+          { clienteId: null },
+          { clasificacionOperacion: ClasificacionOperacion.PENDIENTE },
+        ],
+      },
+      include: {
+        lineas: true,
+      },
+    });
 
     let reclasificadas = 0;
     const fallidas: Array<{ id: string; motivo: string }> = [];
 
-    for (const factura of facturasAProcesar) {
+    for (const factura of facturasPendientes) {
       try {
-        const rncEmisorNorm = normalizarIdentificacion(factura.identificacionEmisor ?? '');
-        const rncReceptorNorm = normalizarIdentificacion(factura.identificacionReceptor ?? '');
-        let formato: 'F606' | 'F607';
-        if (objetivo.has(rncEmisorNorm)) {
-          formato = 'F607';
-        } else if (objetivo.has(rncReceptorNorm)) {
-          formato = 'F606';
-        } else {
+        const rncEmisor = normalizarIdentificacion(factura.identificacionEmisor ?? '');
+        const nombreEmisor = (factura.nombreEmisor ?? '').trim().toUpperCase();
+
+        const rncReceptor = normalizarIdentificacion(factura.identificacionReceptor ?? '');
+        const nombreReceptor = (factura.nombreReceptor ?? '').trim().toUpperCase();
+
+        const esEmisor = (rncEmisor && rncsObjetivo.has(rncEmisor)) || sonNombresComercialesEquivalentes(nombreEmisor, nombreObjetivo);
+        const esReceptor = (rncReceptor && rncsObjetivo.has(rncReceptor)) || sonNombresComercialesEquivalentes(nombreReceptor, nombreObjetivo);
+
+        if (esEmisor && esReceptor) {
+          await this.prisma.factura.update({
+            where: { id: factura.id },
+            data: {
+              clasificacionOperacion: ClasificacionOperacion.CLASIFICACION_AMBIGUA,
+              justificacionIa: `Ambas partes coinciden con el cliente ${cliente.nombre}`,
+            },
+          });
           continue;
         }
 
-        // `false`: la deduce el RNC, no una persona — queda como sugerencia
-        // hasta que alguien la confirme (y hasta entonces bloquea el TXT).
-        await this.procesador.clasificarManualmente(factura.id, clienteId, formato, false);
-        reclasificadas++;
+        if (esEmisor) {
+          const resIngreso = await this.costoGastoIa.determinarIngreso(
+            factura.nombreReceptor,
+            factura.lineas.map((l) => ({
+              descripcion: l.descripcion,
+              cantidad: l.cantidad.toString(),
+              precioUnitario: l.precioUnitario.toString(),
+              importe: l.importe.toString(),
+            })),
+            factura.montoFacturado.toString(),
+          );
+
+          // Asignar nombre oficial del maestro de clientes y tipo de ingreso al emisor
+          await this.prisma.factura.update({
+            where: { id: factura.id },
+            data: {
+              nombreEmisor: cliente.nombre,
+              identificacionEmisor: cliente.rnc,
+              tipoIngreso: resIngreso.tipoIngreso,
+              justificacionIa: `Venta / Ingreso [Tipo ${resIngreso.tipoIngreso}]: ${resIngreso.justificacion}`,
+              confianzaIa: new Prisma.Decimal(resIngreso.confianza.toString()),
+            },
+          });
+
+          // Clasificación como INGRESO
+          await this.procesador.clasificarManualmente(
+            factura.id,
+            clienteId,
+            'F607',
+            false,
+            ClasificacionOperacion.INGRESO,
+          );
+          reclasificadas++;
+        } else if (esReceptor) {
+          // Clasificación como COSTO o GASTO evaluando con IA
+          const { clasificacion, tipoBienesServicios, formaPago, confianza, justificacion } = await this.costoGastoIa.determinarCostoOGasto(
+            factura.nombreEmisor,
+            factura.lineas.map((l) => ({
+              descripcion: l.descripcion,
+              cantidad: l.cantidad.toString(),
+              precioUnitario: l.precioUnitario.toString(),
+              importe: l.importe.toString(),
+            })),
+            factura.montoFacturado.toString(),
+          );
+
+          const operacion = clasificacion === 'COSTO' ? ClasificacionOperacion.COSTO : ClasificacionOperacion.GASTO;
+
+          // Asignar nombre oficial, tipo de bienes/servicios y forma de pago
+          await this.prisma.factura.update({
+            where: { id: factura.id },
+            data: {
+              nombreReceptor: cliente.nombre,
+              identificacionReceptor: cliente.rnc,
+              tipoBienesServicios,
+              formaPago,
+              justificacionIa: justificacion,
+              confianzaIa: new Prisma.Decimal(confianza.toString()),
+            },
+          });
+
+          await this.procesador.clasificarManualmente(
+            factura.id,
+            clienteId,
+            'F606',
+            false,
+            operacion,
+          );
+          reclasificadas++;
+        }
       } catch (e) {
         fallidas.push({ id: factura.id, motivo: e instanceof Error ? e.message : String(e) });
       }
     }
 
-    return { reclasificadas, total: facturasAProcesar.length, fallidas };
+    return { reclasificadas, total: facturasPendientes.length, fallidas };
   }
 
   async importarClientes(filas: ImportarClienteRowDto[]) {
@@ -309,6 +434,8 @@ export class ClientesService {
     for (const fila of filas) {
       try {
         const rnc = normalizarIdentificacion(fila.rnc);
+        const nombre = fila.nombre.trim().toUpperCase();
+
         if (!rnc) {
           throw new BadRequestException('El RNC está vacío o es inválido.');
         }
@@ -316,7 +443,7 @@ export class ClientesService {
         this.validarCamposFiscales(rnc, fila.tipoIngresoDefault, true);
 
         const data = {
-          nombre: fila.nombre,
+          nombre,
           tipoIngresoDefault: fila.tipoIngresoDefault ?? null,
           rncVerificado: validarRnc(rnc),
           ...(fila.tasaItbis !== undefined ? { tasaItbis: fila.tasaItbis } : {}),
@@ -326,7 +453,7 @@ export class ClientesService {
           origen: OrigenCliente.MANUAL,
         };
 
-        await this.prisma.cliente.upsert({
+        const cliente = await this.prisma.cliente.upsert({
           where: { rnc },
           update: data,
           create: {
@@ -336,6 +463,9 @@ export class ClientesService {
             aplicaProporcionalidad: fila.aplicaProporcionalidad ?? false,
           },
         });
+
+        await this.sugerenciasService.marcarComoCreado(rnc, nombre);
+        this.reclasificarFacturas(cliente.id).catch(() => {});
 
         procesados++;
       } catch (e) {

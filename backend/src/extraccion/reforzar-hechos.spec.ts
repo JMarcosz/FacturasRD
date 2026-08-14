@@ -85,4 +85,43 @@ describe('reforzarConPatrones', () => {
     const resultado = reforzarConPatrones(hechosBase(), 'TOTAL 25.00\nEFECTIVO 500.00');
     expect(resultado.formaPagoImpresa).toBe('efectivo');
   });
+
+  it('rescata un NCF colocado erróneamente por el modelo en rncEmisor', () => {
+    const hechos = hechosBase({ rncEmisor: 'B0100000123', ncf: null });
+    const resultado = reforzarConPatrones(hechos, 'texto');
+    expect(resultado.ncf).toBe('B0100000123');
+    expect(resultado.rncEmisor).toBeNull();
+  });
+
+  it('rescata un NCF colocado erróneamente por el modelo en rncReceptor', () => {
+    const hechos = hechosBase({ rncReceptor: 'E310000604671', ncf: null });
+    const resultado = reforzarConPatrones(hechos, 'texto');
+    expect(resultado.ncf).toBe('E310000604671');
+    expect(resultado.rncReceptor).toBeNull();
+  });
+
+  it('rescata un RNC colocado erróneamente en el campo ncf y busca el NCF real', () => {
+    const rnc1 = rncValido('13012345');
+    const hechos = hechosBase({ ncf: rnc1, rncEmisor: null });
+    const texto = `RNC: ${rnc1}\nNCF: B0100004567`;
+    const resultado = reforzarConPatrones(hechos, texto);
+    expect(resultado.rncEmisor).toBe(rnc1);
+    expect(resultado.ncf).toBe('B0100004567');
+  });
+
+  it('rescata la fecha de la firma digital cuando fechaEmision no vino o es borrosa', () => {
+    const hechos = hechosBase({ fechaEmision: null });
+    const texto = `Factura Electrónica e-CF\nNCF: E310000604671\nFecha y hora de firma: 14/08/2026 18:22:00`;
+    const resultado = reforzarConPatrones(hechos, texto);
+    expect(resultado.fechaEmision).toBe('2026-08-14');
+  });
+
+  it('encuentra y limpia RNC con guiones cuando no vino en los hechos', () => {
+    const rnc1 = rncValido('13012345');
+    const rncConGuiones = `${rnc1.slice(0, 1)}-${rnc1.slice(1, 3)}-${rnc1.slice(3, 8)}-${rnc1.slice(8)}`;
+    const hechos = hechosBase({ rncEmisor: null });
+    const texto = `SUPLIDORA MARCOR\nRNC: ${rncConGuiones}`;
+    const resultado = reforzarConPatrones(hechos, texto);
+    expect(resultado.rncEmisor).toBe(rnc1);
+  });
 });

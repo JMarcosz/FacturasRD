@@ -249,6 +249,8 @@ export class FacturasService {
     }
     if (dto.ncf !== undefined) data.ncf = dto.ncf;
     if (dto.ncfModificado !== undefined) data.ncfModificado = dto.ncfModificado;
+    if (dto.tipoNcfCodigo !== undefined) data.tipoNcfCodigo = dto.tipoNcfCodigo;
+    if (dto.clasificacionOperacion !== undefined) data.clasificacionOperacion = dto.clasificacionOperacion;
     if (dto.fechaComprobante !== undefined) data.fechaComprobante = new Date(dto.fechaComprobante);
     if (dto.fechaRetencionOPago !== undefined) {
       data.fechaRetencionOPago = dto.fechaRetencionOPago ? new Date(dto.fechaRetencionOPago) : null;
@@ -381,7 +383,7 @@ export class FacturasService {
    */
   async clasificar(id: string, dto: ClasificarFacturaDto, userId: string) {
     const antes = await this.cargarFacturaCruda(id);
-    await this.procesador.clasificarManualmente(id, dto.clienteId, dto.formato);
+    await this.procesador.clasificarManualmente(id, dto.clienteId, dto.formato, true, dto.clasificacionOperacion);
     await this.prisma.auditLog.create({
       data: {
         userId,

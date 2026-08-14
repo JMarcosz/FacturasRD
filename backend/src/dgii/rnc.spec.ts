@@ -4,6 +4,8 @@ import {
   limpiarIdentificacion,
   detectarTipoIdentificacion,
   normalizarIdentificacion,
+  normalizarNombreComercio,
+  sonNombresComercialesEquivalentes,
   validarCedula,
   validarRnc,
 } from './rnc';
@@ -72,6 +74,23 @@ describe('detectarTipoIdentificacion', () => {
 describe('normalizarIdentificacion', () => {
   it('elimina todo lo que no sea dígito', () => {
     expect(normalizarIdentificacion('1-30-12345-4')).toBe('130123454');
+  });
+});
+
+describe('sonNombresComercialesEquivalentes', () => {
+  it('identifica como iguales variaciones de puntos y comas societarias', () => {
+    expect(sonNombresComercialesEquivalentes('SUPLIDORA MARCOR SRL', 'SUPLIDORA MARCOR, S.R.L')).toBe(true);
+    expect(sonNombresComercialesEquivalentes('FARMATRIX, S.A.S.', 'FARMATRIX SAS')).toBe(true);
+    expect(sonNombresComercialesEquivalentes('Distribuidora de Electricidad del Este, S.A.', 'DISTRIBUIDORA DE ELECTRICIDAD DEL ESTE S.A.')).toBe(true);
+    expect(sonNombresComercialesEquivalentes('Compañía Dominicana de Teléfonos, C por A', 'COMPANIA DOMINICANA DE TELEFONOS CXA')).toBe(true);
+  });
+
+  it('identifica inclusión con prefijo largo', () => {
+    expect(sonNombresComercialesEquivalentes('SUPLIDORA MARCOR', 'SUPLIDORA MARCOR SRL')).toBe(true);
+  });
+
+  it('rechaza nombres completamente distintos', () => {
+    expect(sonNombresComercialesEquivalentes('ALTICE DOMINICANA', 'CLARO DOMINICANA')).toBe(false);
   });
 });
 

@@ -99,7 +99,7 @@ function ir(ruta: { name: string; query?: Record<string, string> }) {
   background: var(--borde-tenue);
   color: var(--texto-suave);
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 600;
 }
 .paso--pendiente .paso__numero {
   background: var(--alerta-fondo);
@@ -117,7 +117,7 @@ function ir(ruta: { name: string; query?: Record<string, string> }) {
 }
 .paso__label {
   font-size: 11.5px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--texto);
 }
 .paso__detalle {
@@ -140,7 +140,7 @@ function ir(ruta: { name: string; query?: Record<string, string> }) {
   color: #fff;
   font-family: inherit;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
 }

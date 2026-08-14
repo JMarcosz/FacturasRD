@@ -481,7 +481,7 @@ onMounted(cargar);
 /* ── Cierre del mes ── */
 .chip-plazo {
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--alerta);
   background: var(--alerta-fondo);
   border: 1px solid var(--alerta-borde);
@@ -505,7 +505,7 @@ onMounted(cargar);
   color: #fff;
   font-family: inherit;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -539,17 +539,17 @@ onMounted(cargar);
   place-items: center;
   color: #fff;
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 600;
   flex: none;
 }
 .etapa__titulo {
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--texto);
 }
 .etapa__valor {
   font-size: 24px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.8px;
   line-height: 1;
 }
@@ -587,7 +587,7 @@ onMounted(cargar);
   padding: 0;
   font-family: inherit;
   font-size: 11.5px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--teal);
   cursor: pointer;
 }
@@ -611,7 +611,7 @@ onMounted(cargar);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--texto-debil);
-  font-weight: 700;
+  font-weight: 600;
   border-bottom: 1px solid var(--borde-tenue);
 }
 .tabla td {
@@ -717,7 +717,7 @@ onMounted(cargar);
 }
 .accion__titulo {
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.25;
   color: var(--texto);
 }
@@ -751,7 +751,7 @@ onMounted(cargar);
   display: grid;
   place-items: center;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   background: var(--error-fondo);
   color: var(--error);
   flex: none;
@@ -816,7 +816,7 @@ onMounted(cargar);
 }
 .vacio__titulo {
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
 }
 .vacio__texto {
   font-size: 12.5px;
@@ -835,7 +835,7 @@ onMounted(cargar);
   color: #fff;
   font-family: inherit;
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: 600;
   padding: 9px 15px;
   cursor: pointer;
 }

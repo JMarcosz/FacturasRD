@@ -15,6 +15,7 @@ import { ExportacionModule } from './exportacion/exportacion.module';
 import { CatalogosModule } from './catalogos/catalogos.module';
 import { EstadisticasModule } from './estadisticas/estadisticas.module';
 import { ReglasModule } from './reglas/reglas.module';
+import { SugerenciasModule } from './sugerencias/sugerencias.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { ReglasModule } from './reglas/reglas.module';
     CatalogosModule,
     EstadisticasModule,
     ReglasModule,
+    SugerenciasModule,
   ],
   controllers: [AppController],
   providers: [],

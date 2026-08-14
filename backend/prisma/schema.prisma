@@ -19,6 +19,25 @@ enum FormatoDgii {
   F607
 }
 
+enum ClasificacionOperacion {
+  INGRESO
+  COSTO
+  GASTO
+  PENDIENTE
+  CLASIFICACION_AMBIGUA
+}
+
+enum EstadoSugerencia {
+  SUGERIDO
+  CREADO
+  DESCARTADO
+}
+
+enum RolFactura {
+  EMISOR
+  RECEPTOR
+}
+
 enum EstadoPeriodo {
   ABIERTO
   REVISADO
@@ -181,6 +200,12 @@ model Factura {
   // recalcularse siempre.
   tipoIdentificacion String // "1" RNC, "2" Cédula, "3" Pasaporte
 
+  // Clasificación contable de negocio
+  clasificacionOperacion ClasificacionOperacion @default(PENDIENTE)
+  justificacionIa        String?
+  confianzaIa            Decimal?               @db.Decimal(5, 4)
+  tipoNcfCodigo          String?                // ej: "01", "02", "14", etc.
+
   // Ambos lados de la transacción tal como los detectó la extracción, editables
   // en la pantalla de revisión. Independientes de tipoIdentificacion. El valor
   // que va al DGII ya no se guarda aparte: se deriva de formato +
@@ -248,9 +273,27 @@ model Factura {
   // hacen seq scan sobre toda la tabla.
   @@index([fechaComprobante])
   @@index([clienteId, formato])
+  @@index([clasificacionOperacion])
   @@index([periodoId])
   @@index([documentoId])
   @@map("facturas")
+}
+
+model SugerenciaCliente {
+  id              String           @id @default(uuid())
+  rnc             String?
+  nombre          String           // Almacenado en MAYÚSCULAS normalizadas
+  rol             RolFactura
+  estado          EstadoSugerencia @default(SUGERIDO)
+  vecesDetectado  Int              @default(1)
+  ultimaFacturaId String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@unique([rnc, rol])
+  @@index([nombre, estado])
+  @@index([rnc, estado])
+  @@map("sugerencias_cliente")
 }
 
 model LineaFactura {

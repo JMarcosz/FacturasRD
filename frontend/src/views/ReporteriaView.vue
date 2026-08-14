@@ -441,7 +441,7 @@ onMounted(async () => {
 }
 .tarjeta__titulo {
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
 }
 .tarjeta__sub {
   font-size: 11.5px;
@@ -496,7 +496,7 @@ onMounted(async () => {
 }
 .campo label {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--texto-suave);
 }
 
@@ -534,7 +534,7 @@ onMounted(async () => {
 }
 .resultado__titulo {
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--teal);
 }
 .resultado--error .resultado__titulo {
@@ -560,7 +560,7 @@ onMounted(async () => {
 }
 .metrica__valor {
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
   color: #134e4a;
 }
 .resultado--error .metrica__valor {

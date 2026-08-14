@@ -44,7 +44,7 @@ const estilo = computed(() => TONOS[props.tono]);
   align-items: center;
   gap: 5px;
   border-radius: var(--radio-chip);
-  font-weight: 700;
+  font-weight: 600;
   white-space: nowrap;
 }
 .pastilla--md {

@@ -28,7 +28,7 @@ services:
     env_file:
       - backend/.env
     ports:
-      - '5432:5432'
+      - '5433:5432'
     volumes:
       - pgdata_dev:/var/lib/postgresql/data
     healthcheck:
@@ -49,7 +49,7 @@ services:
     environment:
       # Dentro de la red de Docker el host de Postgres es "db", no "localhost"
       # (igual que en docker-compose.yml de producción).
-      DATABASE_URL: postgresql://facturas:12345678@db:5432/facturas?schema=public
+      DATABASE_URL: postgresql://${POSTGRES_USER:-facturas}:${POSTGRES_PASSWORD:-12345678}@db:5432/${POSTGRES_DB:-facturas}?schema=public
       # nest start --watch compila con "tsc --watch", que por defecto usa
       # fs.watch nativo — no siempre detecta cambios en un bind mount de
       # Windows/macOS. Estas dos variables (las que TypeScript realmente lee)
@@ -73,7 +73,7 @@ services:
       # que el node_modules del contenedor (Linux) viva aparte y persista
       # entre "up"/"down".
       - backend_node_modules:/app/node_modules
-    command: sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm prisma:generate && pnpm prisma:migrate:deploy && pnpm start:dev"
+    command: sh -c "corepack enable && pnpm install --frozen-lockfile && pnpm prisma:generate && pnpm prisma:migrate:deploy && pnpm db:seed && pnpm start:dev"
 
   frontend:
     image: node:24-alpine

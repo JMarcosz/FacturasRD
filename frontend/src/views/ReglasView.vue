@@ -320,7 +320,7 @@ onMounted(() => {
   padding: 9px 15px;
   font-family: inherit;
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
 }
 .boton-primario:hover {
@@ -332,7 +332,7 @@ onMounted(() => {
   padding: 0;
   font-family: inherit;
   font-size: 11.5px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--teal);
   cursor: pointer;
 }
@@ -361,7 +361,7 @@ onMounted(() => {
   gap: 12px;
 }
 .regla-tarjeta__nombre {
-  font-weight: 700;
+  font-weight: 600;
   font-size: 14px;
 }
 .regla-tarjeta__rnc {
@@ -415,7 +415,7 @@ onMounted(() => {
 }
 .form__campo label {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--texto-suave);
 }
 .form__campo--casilla label {
@@ -458,7 +458,7 @@ onMounted(() => {
 }
 .vacio__titulo {
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
 }
 .vacio__texto {
   font-size: 12.5px;

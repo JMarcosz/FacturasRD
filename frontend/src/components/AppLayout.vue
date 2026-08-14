@@ -335,7 +335,7 @@ defineExpose({ refrescarResumen: cargarResumen });
   display: grid;
   place-items: center;
   font-size: 14px;
-  font-weight: 800;
+  font-weight: 600;
   letter-spacing: -0.5px;
 }
 .marca__texto {
@@ -345,7 +345,7 @@ defineExpose({ refrescarResumen: cargarResumen });
 }
 .marca__nombre {
   font-size: 14.5px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.2px;
   color: var(--texto);
 }
@@ -370,7 +370,7 @@ defineExpose({ refrescarResumen: cargarResumen });
 }
 .nav__titulo {
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.9px;
   color: var(--texto-debil);
   padding: 0 10px 6px;
@@ -398,7 +398,7 @@ defineExpose({ refrescarResumen: cargarResumen });
 .nav__item--activo {
   background: #eef2f1;
   color: #0f4f49;
-  font-weight: 700;
+  font-weight: 600;
 }
 .nav__item--inerte {
   cursor: default;
@@ -406,7 +406,7 @@ defineExpose({ refrescarResumen: cargarResumen });
 }
 .nav__contador {
   font-size: 10.5px;
-  font-weight: 700;
+  font-weight: 600;
   padding: 1px 7px;
   border-radius: var(--radio-chip);
 }
@@ -429,7 +429,7 @@ defineExpose({ refrescarResumen: cargarResumen });
   align-items: center;
   gap: 7px;
   font-size: 11.5px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--teal);
 }
 .periodo__detalle {
@@ -466,7 +466,7 @@ defineExpose({ refrescarResumen: cargarResumen });
   display: grid;
   place-items: center;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   flex: none;
 }
 .usuario__texto {

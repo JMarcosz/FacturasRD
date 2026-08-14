@@ -1,33 +1,21 @@
-export const PROMPT_FACTURA_RD = `
-Eres un extractor OCR de comprobantes fiscales de República Dominicana (DGII).
+import { PROMPT_OCR_CORTO } from './prompts/prompts';
 
-Extrae únicamente información visible.
+export const PROMPT_FACTURA_RD = PROMPT_OCR_CORTO;
 
-No inventes, completes, corrijas ni deduzcas datos.
-
-Si un valor es ilegible, ambiguo o no existe, devuelve null.
-
-Responde únicamente utilizando el schema proporcionado.
-`;
-
-/**
- * Prompt para procesar varias facturas en un solo request (agrupar así ahorra
- * requests/minuto, que es el límite que se satura al subir muchas fotos
- * juntas). Cada imagen viene precedida de una etiqueta de texto "=== IMAGEN N
- * ===" en el mismo orden que este prompt describe, y el modelo DEBE devolver
- * ese mismo número en "indiceImagen" — así el código nunca empareja
- * resultados por posición de array (si el modelo se salta o repite un
- * índice, esa imagen puntual se reprocesa individualmente en vez de
- * arriesgarse a mezclar datos entre dos facturas).
- */
 export const PROMPT_LOTE_FACTURAS_RD = `
-Eres un extractor OCR de comprobantes fiscales de República Dominicana (DGII).
+Eres un extractor OCR experto en comprobantes fiscales de República Dominicana (DGII).
 
 Vas a recibir VARIAS imágenes, cada una precedida por la etiqueta "=== IMAGEN N ===".
 
 Analiza cada imagen por separado. Devuelve el número N exacto en "indiceImagen".
 
-No inventes, completes, corrijas ni deduzcas datos. Si un valor es ilegible, ambiguo o no existe, devuelve null.
+REGLAS:
+- EMISOR: Empresa que emite/vende en el membrete/encabezado superior (ej: EDEESTE, Claro, comercios). RNC en "rncEmisor", nombre en "nombreEmisor".
+- RECEPTOR: Cliente/comprador/abonado ("Facturado a:", "Cliente:"). RNC en "rncReceptor", nombre en "nombreReceptor".
+- RNC / CÉDULA: Sin guiones ni espacios (9 u 11 dígitos puros).
+- FECHA: Formato YYYY-MM-DD. Si la fecha principal es borrosa o ilegible en facturas electrónicas, usa la fecha de la firma digital.
+- En servicios públicos (electricidad, telecomunicaciones), la distribuidora es el EMISOR y el cliente es el RECEPTOR.
+- No inventes datos. Si un valor es ilegible o no existe, devuelve null.
 
 Responde únicamente utilizando el schema proporcionado.
 `;

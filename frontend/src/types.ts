@@ -1,8 +1,23 @@
 export type Formato = 'F606' | 'F607';
+export type ClasificacionOperacion = 'INGRESO' | 'COSTO' | 'GASTO' | 'PENDIENTE' | 'CLASIFICACION_AMBIGUA';
+export type EstadoSugerencia = 'SUGERIDO' | 'CREADO' | 'DESCARTADO';
+export type RolFactura = 'EMISOR' | 'RECEPTOR';
 export type EstadoPeriodo = 'ABIERTO' | 'REVISADO' | 'EXPORTADO';
 export type EstadoDocumento = 'PENDIENTE' | 'PROCESANDO' | 'EXTRAIDO' | 'ERROR';
 export type Severidad = 'ERROR' | 'WARNING';
 export type OrigenFactura = 'IA' | 'MANUAL' | 'EDITADA';
+
+export interface SugerenciaCliente {
+  id: string;
+  rnc: string | null;
+  nombre: string;
+  rol: RolFactura;
+  estado: EstadoSugerencia;
+  vecesDetectado: number;
+  ultimaFacturaId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface Usuario {
   id: string;
@@ -68,6 +83,10 @@ export interface Factura {
   periodoId: string | null;
   clienteId: string | null;
   formato: Formato | null;
+  clasificacionOperacion?: ClasificacionOperacion;
+  justificacionIa?: string | null;
+  confianzaIa?: number | null;
+  tipoNcfCodigo?: string | null;
   cliente?: { id: string; nombre: string; rnc: string } | null;
   tipoIdentificacion: string;
   nombreEmisor: string | null;

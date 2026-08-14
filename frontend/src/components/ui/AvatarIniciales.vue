@@ -58,7 +58,7 @@ const tono = computed(() => {
 .avatar {
   display: grid;
   place-items: center;
-  font-weight: 700;
+  font-weight: 600;
   flex: none;
   line-height: 1;
 }

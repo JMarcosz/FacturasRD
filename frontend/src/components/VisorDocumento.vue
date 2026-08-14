@@ -59,6 +59,14 @@ function rotar() {
   rotacion.value = (rotacion.value + 90) % 360;
 }
 
+function onImagenCargada(ev: Event) {
+  const img = ev.target as HTMLImageElement;
+  if (img && img.naturalWidth > img.naturalHeight) {
+    // Auto-rotar facturas apaisadas/horizontales a vertical automáticamente
+    rotacion.value = 90;
+  }
+}
+
 watch(() => props.documentoId, cargar, { immediate: true });
 onBeforeUnmount(limpiar);
 
@@ -88,8 +96,10 @@ defineExpose({ recargar: cargar, acercar, alejar, rotar, abrirAparte, zoom });
         <img
           :src="objectUrl"
           class="visor__img"
+          :class="{ 'visor__img--rotada': rotacion % 180 !== 0 }"
           :style="{ transform: `rotate(${rotacion}deg)` }"
           alt="Documento original"
+          @load="onImagenCargada"
         />
       </div>
     </template>
@@ -102,7 +112,7 @@ defineExpose({ recargar: cargar, acercar, alejar, rotar, abrirAparte, zoom });
   background: #f7f8fa;
   border: 1px solid var(--borde-tenue);
   border-radius: 11px;
-  padding: 14px;
+  padding: 6px;
   overflow: auto;
   display: flex;
   /* Sin justify-content/align-items: center — con overflow:auto recorta el
@@ -128,6 +138,11 @@ defineExpose({ recargar: cargar, acercar, alejar, rotar, abrirAparte, zoom });
   display: block;
   box-shadow: 0 2px 14px rgba(16, 20, 26, 0.09);
   border-radius: 6px;
+  transition: transform 0.2s ease;
+}
+.visor__img--rotada {
+  max-width: 75vh;
+  max-height: 95%;
 }
 .visor__pdf {
   width: 100%;

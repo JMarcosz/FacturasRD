@@ -80,7 +80,7 @@ const textoDelta = computed(() => {
 }
 .kpi__valor {
   font-size: 26px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.9px;
   line-height: 1;
 }

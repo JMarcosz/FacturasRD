@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SchedulerRegistry } from '@nestjs/schedule';
-import { Prisma } from '@prisma/client';
+import { ClasificacionOperacion, Prisma } from '@prisma/client';
 import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma.service';
 import { DocumentosService } from '../documentos/documentos.service';
@@ -43,6 +43,8 @@ function yyyymmDe(fecha: Date): string {
   return `${fecha.getUTCFullYear()}${String(fecha.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
+import { DocumentosEventosService } from '../documentos/documentos-eventos.service';
+
 const NOMBRE_INTERVALO = 'procesador-documentos';
 
 @Injectable()
@@ -54,13 +56,14 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly documentosService: DocumentosService,
+    private readonly eventosService: DocumentosEventosService,
     private readonly config: ConfigService,
     private readonly schedulerRegistry: SchedulerRegistry,
     private readonly clasificador: ClasificadorService,
     private readonly reglas: ReglasService,
     @Inject(INVOICE_EXTRACTOR) private readonly extractor: IInvoiceExtractor,
   ) {
-    this.tamanoLote = Number(this.config.get('GEMINI_TAMANO_LOTE', 10));
+    this.tamanoLote = Number(this.config.get('GEMINI_TAMANO_LOTE', 100));
   }
 
   onModuleInit(): void {
@@ -106,32 +109,22 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
   private async procesarLote(documentos: DocumentoPendiente[]): Promise<void> {
     for (const documento of documentos) {
       await this.documentosService.marcarProcesando(documento.id);
+      this.eventosService.emitir({ tipo: 'PROCESANDO', documentoId: documento.id });
     }
 
-    if (documentos.length === 1) {
-      await this.procesarIndividual(documentos[0]);
-      return;
-    }
+    this.logger.log(`Enviando lote de ${documentos.length} documentos en ráfaga paralela con guardado en tiempo real...`);
 
-    this.logger.log(`Enviando lote de ${documentos.length} documentos a Gemini...`);
-    let resultados: Array<ResultadoExtraccion | null>;
-    try {
-      const entradas = await Promise.all(
-        documentos.map(async (doc) => ({ buffer: await leerArchivo(doc.rutaArchivo), mimeType: doc.mimeType })),
-      );
-      resultados = await this.extractor.extraerLote(entradas);
-    } catch (e) {
-      // Fallo del lote entero (red, error de la API no ligado a un solo
-      // documento) — se cae a reprocesar cada uno individualmente en vez de
-      // perder el lote completo.
-      this.logger.error(`Extracción en lote falló, se reprocesa cada documento individualmente: ${(e as Error).message}`);
-      resultados = documentos.map(() => null);
-    }
-
+    // Procesamiento y persistencia en paralelo independiente por documento
     await Promise.allSettled(
-      documentos.map((documento, i) => {
-        const resultado = resultados[i];
-        return resultado ? this.persistirResultado(documento, resultado) : this.procesarIndividual(documento);
+      documentos.map(async (doc) => {
+        try {
+          const buffer = await leerArchivo(doc.rutaArchivo);
+          const resultado = await this.extractor.extraer(buffer, doc.mimeType);
+          await this.persistirResultado(doc, resultado);
+        } catch (e) {
+          this.logger.warn(`Falló extracción individual de "${doc.filename}": ${(e as Error).message}`);
+          await this.manejarError(doc, e);
+        }
       }),
     );
   }
@@ -157,44 +150,37 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(
         `"${documento.filename}" analizado (${resultado.paginas}p): ` +
           `rncEmisor=${h.rncEmisor ?? '—'} rncReceptor=${h.rncReceptor ?? '—'} ncf=${h.ncf ?? '—'} ` +
-          `fecha=${h.fechaEmision ?? '—'} montoTotal=${h.montoTotal ?? '—'} itbis=${h.itbis ?? '—'}`,
+          `fecha=${h.fechaEmision ?? '—'} montoTotal=${h.montoTotal ?? '—'} lineas=${h.lineas?.length ?? 0}`,
       );
 
-      // 1) Guardar siempre los hechos comunes — la factura ya es visible en la
-      //    lista principal aunque todavía no se sepa a qué cliente/formato
-      //    pertenece.
+      // 1) Guardar los hechos comunes y las líneas de la factura
       const facturaId = await this.guardarComun(documento.id, resultado);
 
-      // 1.5) Detectar RNCs y crear clientes automáticos (no confirmados)
-      await this.autoDetectarClientes(resultado.hechos);
+      // 2) Clasificar según Maestro de Clientes (Ingreso / Costo / Gasto / Pendiente / Ambigua)
+      const clasificacion = await this.clasificador.clasificar(h, facturaId);
 
-      // 2) Si el documento ya viene de un período conocido (flujo anterior, o
-      //    una reclasificación manual que ya fijó el período), usar ese
-      //    cliente/formato directamente sin volver a adivinar.
-      if (documento.periodo) {
+      await this.prisma.factura.update({
+        where: { id: facturaId },
+        data: {
+          clasificacionOperacion: clasificacion.clasificacionOperacion,
+          justificacionIa: clasificacion.justificacionIa,
+          confianzaIa: clasificacion.confianzaIa !== undefined ? new Decimal(clasificacion.confianzaIa.toString()) : null,
+        },
+      });
+
+      if (clasificacion.clienteId && clasificacion.formato) {
         await this.clasificarYDerivar(facturaId, resultado, {
-          clienteId: documento.periodo.clienteId,
-          formato: documento.periodo.formato,
+          clienteId: clasificacion.clienteId,
+          formato: clasificacion.formato,
+          clasificacionConfirmada: clasificacion.clasificacionConfirmada,
+          tipoIngreso: clasificacion.tipoIngreso,
+          tipoBienesServicios: clasificacion.tipoBienesServicios,
+          formaPago: clasificacion.formaPago,
         });
-        return;
       }
 
-      //    contra los Cliente configurados. Sin coincidencia, la factura queda
-      //    guardada "sin clasificar" — ya visible, pendiente de asignación manual.
-      let clasificacion = await this.clasificador.clasificar(h);
-      
-      if (!clasificacion) {
-        const rncEmisor = h.rncEmisor ?? '';
-        const rncReceptor = h.rncReceptor ?? '';
-        const regla = await this.reglas.buscarRegla(rncEmisor, rncReceptor);
-        if (regla && regla.clienteId && regla.formato) {
-          clasificacion = { clienteId: regla.clienteId, formato: regla.formato as Formato, clasificacionConfirmada: false };
-        }
-      }
-
-      if (clasificacion) {
-        await this.clasificarYDerivar(facturaId, resultado, clasificacion);
-      }
+      // Notificación reactiva inmediata SSE
+      this.eventosService.emitir({ tipo: 'EXTRAIDO', documentoId: documento.id, facturaId });
     } catch (e) {
       await this.manejarError(documento, e);
     }
@@ -206,12 +192,12 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
     if (documento.intentos + 1 >= MAXIMO_INTENTOS) {
       await this.documentosService.marcarError(documento.id, mensaje);
     } else {
-      // Vuelve a PENDIENTE para reintentar en un ciclo posterior.
       await this.prisma.documento.update({ where: { id: documento.id }, data: { estado: 'PENDIENTE', error: mensaje } });
     }
+    this.eventosService.emitir({ tipo: 'ERROR', documentoId: documento.id });
   }
 
-  /** Guarda los campos comunes a 606/607 (identificación de ambas partes, NCF, fecha, montos). Sin período ni clasificación todavía. */
+  /** Guarda los campos comunes y las líneas extraídas de la factura. */
   private async guardarComun(documentoId: string, resultado: ResultadoExtraccion): Promise<string> {
     const h = resultado.hechos;
     const fechaComprobante = h.fechaEmision ? new Date(h.fechaEmision) : null;
@@ -220,14 +206,8 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
     const factura = await this.prisma.factura.create({
       data: {
         documentoId,
-        // Sin clasificar todavía no hay lado declarante (para 607 declara el
-        // receptor, para 606 el emisor — no se sabe cuál hasta clasificar), así
-        // que no hay heurística de dígitos que aplicar. La derivación calcula
-        // el tipo correcto al clasificar.
         tipoIdentificacion: '3',
         nombreEmisor: h.nombreEmisor,
-        // Se guardan sin guiones ni puntos: el OCR los arrastra del papel y el
-        // mismo RNC acababa almacenado de dos formas distintas.
         identificacionEmisor: limpiarIdentificacion(h.rncEmisor) || null,
         nombreReceptor: h.nombreReceptor,
         identificacionReceptor: limpiarIdentificacion(h.rncReceptor) || null,
@@ -242,58 +222,17 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
         confidences: resultado.confidences,
         origen: 'IA',
         revisada: false,
+        lineas: {
+          create: (h.lineas || []).map((l) => ({
+            descripcion: l.descripcion || 'Artículo / Servicio',
+            cantidad: dec(l.cantidad || '1'),
+            precioUnitario: dec(l.precioUnitario || '0'),
+            importe: dec(l.importe || '0'),
+          })),
+        },
       },
     });
     return factura.id;
-  }
-
-  /**
-   * Detecta RNCs de emisor y receptor y crea Clientes automáticos
-   * (origen: AUTO, confirmado: false) para los que no existan todavía.
-   * No participa en la clasificación hasta que el usuario los confirme.
-   */
-  private async autoDetectarClientes(hechos: FacturaExtraida): Promise<void> {
-    const pares: Array<{ rnc: string; nombre: string }> = [];
-
-    const rncEmisor = normalizarIdentificacion(hechos.rncEmisor ?? '');
-    if (rncEmisor) pares.push({ rnc: rncEmisor, nombre: hechos.nombreEmisor?.trim() || SIN_NOMBRE });
-
-    const rncReceptor = normalizarIdentificacion(hechos.rncReceptor ?? '');
-    if (rncReceptor && rncReceptor !== rncEmisor) {
-      pares.push({ rnc: rncReceptor, nombre: hechos.nombreReceptor?.trim() || SIN_NOMBRE });
-    }
-
-    for (const { rnc, nombre } of pares) {
-      const existe = await this.prisma.cliente.findUnique({ where: { rnc } });
-      if (existe) {
-        // Si el cliente se creó desde una factura que no traía nombre, quedó
-        // como SIN_NOMBRE y así se mostraba para siempre. En cuanto otra
-        // factura del mismo RNC sí lo trae, se adopta — pero solo mientras
-        // siga sin confirmar, para no pisar un nombre que alguien ya revisó.
-        if (existe.nombre === SIN_NOMBRE && nombre !== SIN_NOMBRE && !existe.confirmado) {
-          await this.prisma.cliente.update({ where: { id: existe.id }, data: { nombre } });
-          this.logger.log(`Cliente ${rnc} pasa a llamarse "${nombre}"`);
-        }
-        continue;
-      }
-
-      try {
-        await this.prisma.cliente.create({
-          data: {
-            rnc,
-            nombre,
-            origen: 'AUTO',
-            confirmado: false,
-            rncVerificado: validarRnc(rnc),
-          },
-        });
-        this.logger.log(`Cliente auto-detectado: ${nombre} (${rnc})`);
-      } catch (e) {
-        // Colisión de constraint único: otro proceso lo creó primero — no pasa nada.
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') continue;
-        throw e;
-      }
-    }
   }
 
   /**
@@ -337,12 +276,19 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
   async clasificarYDerivar(
     facturaId: string,
     resultado: Pick<ResultadoExtraccion, 'hechos' | 'confidences'>,
-    clasificacion: { clienteId: string; formato: Formato; clasificacionConfirmada?: boolean },
+    clasificacion: {
+      clienteId: string;
+      formato: Formato;
+      clasificacionConfirmada?: boolean;
+      tipoIngreso?: string;
+      tipoBienesServicios?: string;
+      formaPago?: string;
+    },
   ): Promise<void> {
     const clienteRow = await this.prisma.cliente.findUniqueOrThrow({ where: { id: clasificacion.clienteId } });
     const cliente: ConfiguracionCliente = {
       rnc: clienteRow.rnc,
-      tipoIngresoDefault: clienteRow.tipoIngresoDefault,
+      tipoIngresoDefault: clasificacion.tipoIngreso || clienteRow.tipoIngresoDefault,
       tasaItbis: new Decimal(clienteRow.tasaItbis.toString()),
       aplicaProporcionalidad: clienteRow.aplicaProporcionalidad,
     };
@@ -374,6 +320,8 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
           data: {
             clienteId: clasificacion.clienteId,
             formato: 'F607',
+            nombreEmisor: clienteRow.nombre,
+            identificacionEmisor: clienteRow.rnc,
             clasificacionConfirmada: clasificacion.clasificacionConfirmada ?? false,
             periodoId,
             tipoIdentificacion: factura.tipoIdentificacion,
@@ -381,7 +329,7 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
             ncfModificado: factura.ncfModificado,
             fechaComprobante: factura.fechaComprobante,
             fechaRetencionOPago: factura.fechaRetencionOPago,
-            tipoIngreso: vacioComoNull(factura.tipoIngreso),
+            tipoIngreso: vacioComoNull(clasificacion.tipoIngreso || factura.tipoIngreso || cliente.tipoIngresoDefault || '01'),
             montoFacturado: d(factura.montoFacturado),
             itbisFacturado: d(factura.itbisFacturado),
             itbisRetenido: d(factura.itbisRetenido),
@@ -406,7 +354,16 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
       ]);
     } else {
       const { factura } = derivarFactura606(resultado.hechos, cliente);
-      const validaciones = validarFactura606(factura, contexto);
+      const tipoBienesElegido = clasificacion.tipoBienesServicios || factura.tipoBienesServicios || '02';
+      const formaPagoElegida = clasificacion.formaPago || factura.formaPago || '01';
+
+      const facturaParaValidar = {
+        ...factura,
+        tipoBienesServicios: tipoBienesElegido,
+        formaPago: formaPagoElegida,
+      };
+      const validaciones = validarFactura606(facturaParaValidar, contexto);
+
       await this.prisma.$transaction([
         this.prisma.validacion.deleteMany({ where: { facturaId } }),
         this.prisma.factura.update({
@@ -414,6 +371,8 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
           data: {
             clienteId: clasificacion.clienteId,
             formato: 'F606',
+            nombreReceptor: clienteRow.nombre,
+            identificacionReceptor: clienteRow.rnc,
             clasificacionConfirmada: clasificacion.clasificacionConfirmada ?? false,
             periodoId,
             tipoIdentificacion: factura.tipoIdentificacion,
@@ -421,8 +380,8 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
             ncfModificado: factura.ncfModificado,
             fechaComprobante: factura.fechaComprobante,
             fechaRetencionOPago: factura.fechaRetencionOPago,
-            tipoBienesServicios: vacioComoNull(factura.tipoBienesServicios),
-            formaPago: vacioComoNull(factura.formaPago),
+            tipoBienesServicios: vacioComoNull(tipoBienesElegido),
+            formaPago: vacioComoNull(formaPagoElegida),
             tipoRetencionISR: factura.tipoRetencionISR,
             montoFacturado: d(factura.montoFacturado),
             itbisFacturado: d(factura.itbisFacturado),
@@ -465,6 +424,7 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
     clienteId: string,
     formato: Formato,
     confirmada = true,
+    clasificacionOperacion?: ClasificacionOperacion,
   ): Promise<void> {
     const factura = await this.prisma.factura.findUniqueOrThrow({ where: { id: facturaId } });
     const montoTotal = new Decimal(factura.montoFacturado.toString())
@@ -496,6 +456,14 @@ export class ProcesadorService implements OnModuleInit, OnModuleDestroy {
       lineas: [],
     };
     const confidences = (factura.confidences as Record<string, number> | null) ?? {};
+
+    // Si no se pasó explícitamente clasificacionOperacion, inferirla del formato
+    const operacion = clasificacionOperacion || (formato === 'F607' ? ClasificacionOperacion.INGRESO : ClasificacionOperacion.GASTO);
+
+    await this.prisma.factura.update({
+      where: { id: facturaId },
+      data: { clasificacionOperacion: operacion },
+    });
 
     await this.clasificarYDerivar(facturaId, { hechos, confidences }, { clienteId, formato, clasificacionConfirmada: confirmada });
   }

@@ -50,7 +50,7 @@ withDefaults(defineProps<{ titulo?: string; subtitulo?: string; sinPadding?: boo
 }
 .panel__titulo {
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
 }
 .panel__subtitulo {
   font-size: 12px;

@@ -1,77 +1,167 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { ClasificacionOperacion, FormatoDgii, RolFactura } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
-import { normalizarIdentificacion, formatoPorTipoNcf } from '../dgii';
+import { normalizarIdentificacion, sonNombresComercialesEquivalentes } from '../dgii';
 import type { FacturaExtraida, Formato } from '../dgii';
+import { ClasificadorCostoGastoService } from './clasificador-costo-gasto.service';
+import { SugerenciasService } from '../sugerencias/sugerencias.service';
 
 export interface ResultadoClasificacion {
-  clienteId: string;
-  formato: Formato;
+  clienteId: string | null;
+  formato: Formato | null;
+  clasificacionOperacion: ClasificacionOperacion;
+  tipoIngreso?: string;
+  tipoBienesServicios?: string;
+  formaPago?: string;
+  justificacionIa?: string;
+  confianzaIa?: number;
   clasificacionConfirmada?: boolean;
 }
 
 @Injectable()
 export class ClasificadorService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(ClasificadorService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly costoGastoIa: ClasificadorCostoGastoService,
+    private readonly sugerenciasService: SugerenciasService,
+  ) {}
 
   /**
-   * Decide a qué Cliente y en qué formato pertenece una factura, comparando
-   * el RNC del emisor y del receptor contra los `Cliente` ya configurados:
-   * - RNC del emisor coincide con un Cliente → es una venta de ese cliente (607).
-   * - RNC del receptor coincide con un Cliente → es una compra de ese cliente (606).
-   * - Ninguno coincide → sin clasificar (null), queda pendiente de asignación manual.
-   *
-   * Si ambos coinciden (con clientes distintos, dos contribuyentes propios
-   * transando entre sí), gana el emisor — es el caso menos ambiguo de los dos.
+   * Clasifica una factura según el Maestro de Clientes y la posición de las entidades:
+   * - Emisor en Maestro y Receptor no -> INGRESO (607) + Inferencia IA de Tipo de Ingreso (01..06)
+   * - Receptor en Maestro y Emisor no -> COSTO o GASTO (606) + Inferencia IA de Tipo Bienes (01..11) y Forma Pago (01..07)
+   * - Ninguno en Maestro -> PENDIENTE + Sugerencias de clientes
+   * - Ambos en Maestro -> CLASIFICACION_AMBIGUA (resolución manual)
    */
-  async clasificar(hechos: FacturaExtraida): Promise<ResultadoClasificacion | null> {
+  async clasificar(hechos: FacturaExtraida, facturaId?: string): Promise<ResultadoClasificacion> {
     const rncEmisor = normalizarIdentificacion(hechos.rncEmisor ?? '');
+    const nombreEmisor = hechos.nombreEmisor?.trim() || '';
+
     const rncReceptor = normalizarIdentificacion(hechos.rncReceptor ?? '');
+    const nombreReceptor = hechos.nombreReceptor?.trim() || '';
 
-    const formatoDGII = formatoPorTipoNcf(hechos.ncf ?? '', hechos.ncfModificado ?? undefined);
+    const clienteEmisor = await this.buscarEnMaestro(rncEmisor, nombreEmisor);
+    const clienteReceptor = await this.buscarEnMaestro(rncReceptor, nombreReceptor);
 
-    if (rncEmisor) {
-      const clienteEmisor = await this.buscarContribuyente(rncEmisor);
-      if (clienteEmisor && (formatoDGII === 'F607' || formatoDGII === null)) {
-        return { clienteId: clienteEmisor.id, formato: 'F607' };
-      }
+    // Caso D: Ambos están registrados como clientes -> Estado explícito CLASIFICACION_AMBIGUA
+    if (clienteEmisor && clienteReceptor && clienteEmisor.id !== clienteReceptor.id) {
+      this.logger.warn(`Clasificación ambigua para factura ${facturaId || 'nueva'}: Emisor (${clienteEmisor.nombre}) y Receptor (${clienteReceptor.nombre}) son clientes.`);
+      return {
+        clienteId: null,
+        formato: null,
+        clasificacionOperacion: ClasificacionOperacion.CLASIFICACION_AMBIGUA,
+        justificacionIa: `Ambos comercios (Emisor: ${clienteEmisor.nombre}, Receptor: ${clienteReceptor.nombre}) están registrados en el maestro de clientes.`,
+        confianzaIa: 0.5,
+        clasificacionConfirmada: false,
+      };
     }
 
-    if (rncReceptor) {
-      const clienteReceptor = await this.buscarContribuyente(rncReceptor);
-      if (clienteReceptor && (formatoDGII === 'F606' || formatoDGII === null)) {
-        return { clienteId: clienteReceptor.id, formato: 'F606' };
-      }
+    // Caso A: Emisor registrado en el maestro de clientes -> INGRESO (607) con Tipo de Ingreso IA
+    if (clienteEmisor) {
+      const resIngreso = await this.costoGastoIa.determinarIngreso(
+        hechos.nombreReceptor,
+        hechos.lineas || [],
+        hechos.montoTotal,
+      );
+
+      return {
+        clienteId: clienteEmisor.id,
+        formato: 'F607',
+        clasificacionOperacion: ClasificacionOperacion.INGRESO,
+        tipoIngreso: resIngreso.tipoIngreso,
+        justificacionIa: `Venta / Ingreso [Tipo ${resIngreso.tipoIngreso}]: ${resIngreso.justificacion}`,
+        confianzaIa: resIngreso.confianza,
+        clasificacionConfirmada: false,
+      };
     }
 
-    return null;
+    // Caso B: Receptor registrado en el maestro de clientes -> COSTO o GASTO (606) con Tipo de Bienes y Forma Pago IA
+    if (clienteReceptor) {
+      const resCostoGasto = await this.costoGastoIa.determinarCostoOGasto(
+        hechos.nombreEmisor,
+        hechos.lineas || [],
+        hechos.montoTotal,
+        hechos.formaPagoImpresa,
+      );
+
+      return {
+        clienteId: clienteReceptor.id,
+        formato: 'F606',
+        clasificacionOperacion: resCostoGasto.clasificacion === 'COSTO' ? ClasificacionOperacion.COSTO : ClasificacionOperacion.GASTO,
+        tipoBienesServicios: resCostoGasto.tipoBienesServicios,
+        formaPago: resCostoGasto.formaPago,
+        justificacionIa: resCostoGasto.justificacion,
+        confianzaIa: resCostoGasto.confianza,
+        clasificacionConfirmada: false,
+      };
+    }
+
+    // Caso C: Ninguno está registrado en el maestro -> PENDIENTE + Generación de Sugerencias
+    if (rncEmisor || nombreEmisor) {
+      await this.sugerenciasService.registrarSugerencia(rncEmisor, nombreEmisor, RolFactura.EMISOR, facturaId);
+    }
+    if (rncReceptor || nombreReceptor) {
+      await this.sugerenciasService.registrarSugerencia(rncReceptor, nombreReceptor, RolFactura.RECEPTOR, facturaId);
+    }
+
+    return {
+      clienteId: null,
+      formato: null,
+      clasificacionOperacion: ClasificacionOperacion.PENDIENTE,
+      justificacionIa: 'Ningún participante está registrado en el maestro de clientes.',
+      confianzaIa: 0.0,
+      clasificacionConfirmada: false,
+    };
   }
 
   /**
-   * Busca el contribuyente por su RNC y, si no aparece, por sus alias — los
-   * otros RNC bajo los que se le reconoce, típicamente un dígito mal leído que
-   * ya se resolvió fusionando duplicados.
-   *
-   * Cuenta cualquier cliente activo, confirmado o no. Un contribuyente recién
-   * detectado desde el comercio de la factura clasifica sus facturas de
-   * inmediato: exigirle además `confirmado` dejaba todo el lote sin clasificar
-   * hasta ir cliente por cliente, que es justo el trabajo manual que esto
-   * ahorra. Lo que protege la declaración no es este filtro sino
-   * `clasificacionConfirmada` en la factura, que sigue en false y bloquea el
-   * TXT hasta que una persona la revise.
-   *
-   * Descartar un auto-detectado lo desactiva, y `activo: true` lo deja fuera.
+   * Busca un contribuyente en el maestro de clientes activos:
+   * 1. Prioridad principal: Coincidencia por RNC/Cédula o sus alias.
+   * 2. Prioridad secundaria: Coincidencia por Nombre (exacto o equivalente ignorando signos de puntuación).
    */
-  private async buscarContribuyente(rnc: string): Promise<{ id: string } | null> {
-    const directo = await this.prisma.cliente.findFirst({
-      where: { rnc, activo: true },
-      select: { id: true },
-    });
-    if (directo) return directo;
+  async buscarEnMaestro(rncRaw?: string | null, nombreRaw?: string | null): Promise<{ id: string; nombre: string; rnc: string } | null> {
+    const rnc = rncRaw ? normalizarIdentificacion(rncRaw) : '';
+    const nombre = nombreRaw ? nombreRaw.trim().toUpperCase() : '';
 
-    const alias = await this.prisma.clienteRncAlias.findFirst({
-      where: { rnc, cliente: { activo: true } },
-      select: { clienteId: true },
-    });
-    return alias ? { id: alias.clienteId } : null;
+    // 1. Búsqueda por RNC directo o Alias (Máxima prioridad)
+    if (rnc) {
+      const directo = await this.prisma.cliente.findFirst({
+        where: { rnc, activo: true },
+        select: { id: true, nombre: true, rnc: true },
+      });
+      if (directo) return directo;
+
+      const alias = await this.prisma.clienteRncAlias.findFirst({
+        where: { rnc, cliente: { activo: true } },
+        select: { cliente: { select: { id: true, nombre: true, rnc: true } } },
+      });
+      if (alias?.cliente) return alias.cliente;
+    }
+
+    // 2. Búsqueda secundaria por Nombre
+    if (nombre) {
+      // Coincidencia directa exacta
+      const porNombre = await this.prisma.cliente.findFirst({
+        where: {
+          nombre: { equals: nombre, mode: 'insensitive' },
+          activo: true,
+        },
+        select: { id: true, nombre: true, rnc: true },
+      });
+      if (porNombre) return porNombre;
+
+      // Coincidencia normalizada insensible a comas, puntos y sufijos societarios
+      const todosLosClientes = await this.prisma.cliente.findMany({
+        where: { activo: true },
+        select: { id: true, nombre: true, rnc: true },
+      });
+
+      const equivalente = todosLosClientes.find((c) => sonNombresComercialesEquivalentes(nombre, c.nombre));
+      if (equivalente) return equivalente;
+    }
+
+    return null;
   }
 }

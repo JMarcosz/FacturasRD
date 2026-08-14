@@ -16,18 +16,16 @@ import Pastilla from '../components/ui/Pastilla.vue';
 import AvatarIniciales from '../components/ui/AvatarIniciales.vue';
 import ImportarClientesDialog from '../components/ImportarClientesDialog.vue';
 import {
-  confirmarCliente,
   crearCliente,
-  descartarCliente,
   detectarDuplicados,
   fusionarClientes,
   listarClientes,
-  reclasificarFacturas,
 } from '../api/clientes';
+import { descartarSugerencia, listarSugerencias } from '../api/sugerencias';
 import { aYyyymm, obtenerResumen } from '../api/estadisticas';
 import { fmtMontoCorto, fmtYyyymm } from '../formato';
 import { useCatalogosStore } from '../stores/catalogos';
-import type { Cliente, GrupoDuplicado, RollupCliente } from '../types';
+import type { Cliente, GrupoDuplicado, RollupCliente, SugerenciaCliente } from '../types';
 
 type Tono = 'ok' | 'alerta' | 'error' | 'info' | 'indigo' | 'neutro' | 'teal';
 
@@ -48,6 +46,7 @@ const toast = useToast();
 const catalogos = useCatalogosStore();
 
 const clientes = ref<Cliente[]>([]);
+const sugerencias = ref<SugerenciaCliente[]>([]);
 const rollups = ref<RollupCliente[]>([]);
 const duplicados = ref<GrupoDuplicado[]>([]);
 const cargando = ref(true);
@@ -69,9 +68,6 @@ const rollupPorCliente = computed(() => {
 
 const clientesManuales = computed(() =>
   clientes.value.filter((c) => c.origen === 'MANUAL' || c.confirmado),
-);
-const clientesAutoDetectados = computed(() =>
-  clientes.value.filter((c) => c.origen === 'AUTO' && !c.confirmado),
 );
 
 const tarjetas = computed<TarjetaCliente[]>(() =>
@@ -117,49 +113,6 @@ function abrir(id: string) {
   router.push({ name: 'facturas', query: { clienteId: id } });
 }
 
-// ── Confirmación Auto-detectados ────────────────────────────────────────────
-const confirmando = ref<string | null>(null);
-const tipoIngresoConfirmar = ref('01');
-
-async function onConfirmarCliente(id: string) {
-  try {
-    await confirmarCliente(id, tipoIngresoConfirmar.value);
-    const resultado = await reclasificarFacturas(id);
-    await cargar();
-    confirmando.value = null;
-    toast.add({
-      severity: 'success',
-      summary: 'Cliente confirmado',
-      detail: resultado.reclasificadas > 0
-        ? `${resultado.reclasificadas} facturas reclasificadas automáticamente.`
-        : undefined,
-      life: 5000,
-    });
-  } catch (e: any) {
-    toast.add({
-      severity: 'error',
-      summary: 'Error al confirmar',
-      detail: e?.response?.data?.message ?? 'Intenta de nuevo.',
-      life: 5000,
-    });
-  }
-}
-
-async function onDescartarCliente(id: string) {
-  try {
-    await descartarCliente(id);
-    await cargar();
-    toast.add({ severity: 'info', summary: 'Cliente descartado', life: 3000 });
-  } catch (e: any) {
-    toast.add({
-      severity: 'error',
-      summary: 'Error al descartar',
-      detail: e?.response?.data?.message ?? 'Intenta de nuevo.',
-      life: 5000,
-    });
-  }
-}
-
 // ── Alta de cliente ──────────────────────────────────────────────────────────
 const dialogo = ref(false);
 const dialogoImportar = ref(false);
@@ -179,11 +132,41 @@ const form = reactive({
 function abrirDialogo() {
   form.rnc = '';
   form.nombre = '';
-  form.tipoIngresoDefault = null;
+  form.tipoIngresoDefault = '01';
   form.tasaPct = 18;
   form.aplicaProporcionalidad = false;
   errorForm.value = '';
   dialogo.value = true;
+}
+
+function onCrearDesdeSugerencia(sug: SugerenciaCliente) {
+  form.rnc = sug.rnc || '';
+  form.nombre = sug.nombre.toUpperCase();
+  form.tipoIngresoDefault = '01';
+  form.tasaPct = 18;
+  form.aplicaProporcionalidad = false;
+  errorForm.value = '';
+  dialogo.value = true;
+}
+
+async function onDescartarSugerencia(sug: SugerenciaCliente) {
+  try {
+    await descartarSugerencia(sug.id);
+    sugerencias.value = await listarSugerencias();
+    toast.add({
+      severity: 'info',
+      summary: 'Sugerencia descartada',
+      detail: `No se volverá a sugerir ${sug.nombre}.`,
+      life: 3500,
+    });
+  } catch (e: any) {
+    toast.add({
+      severity: 'error',
+      summary: 'Error al descartar sugerencia',
+      detail: e?.response?.data?.message ?? 'Intenta de nuevo.',
+      life: 5000,
+    });
+  }
 }
 
 async function guardar() {
@@ -194,18 +177,23 @@ async function guardar() {
   }
   guardando.value = true;
   try {
+    const nombreMayus = form.nombre.trim().toUpperCase();
     const creado = await crearCliente({
       rnc: form.rnc.trim(),
-      nombre: form.nombre.trim(),
+      nombre: nombreMayus,
       tipoIngresoDefault: form.tipoIngresoDefault ?? undefined,
       tasaItbis: Number(((form.tasaPct ?? 0) / 100).toFixed(4)),
       aplicaProporcionalidad: form.aplicaProporcionalidad,
     });
     dialogo.value = false;
-    toast.add({ severity: 'success', summary: 'Cliente creado', detail: creado.nombre, life: 3000 });
+    toast.add({
+      severity: 'success',
+      summary: 'Cliente creado en el maestro',
+      detail: `${creado.nombre} agregado. Facturas pendientes reclasificadas automáticamente.`,
+      life: 4000,
+    });
     await cargar();
   } catch (e: unknown) {
-    // El dígito verificador del RNC lo valida el servidor: su mensaje es el útil.
     errorForm.value = mensajeError(e, 'No se pudo crear el cliente.');
   } finally {
     guardando.value = false;
@@ -222,15 +210,18 @@ async function cargar() {
   cargando.value = true;
   errorCarga.value = '';
   try {
-    clientes.value = await listarClientes();
+    const [listaClientes, listaSugerencias] = await Promise.all([
+      listarClientes(),
+      listarSugerencias(),
+    ]);
+    clientes.value = listaClientes;
+    sugerencias.value = listaSugerencias;
   } catch (e: unknown) {
     errorCarga.value = mensajeError(e, 'No se pudo cargar la lista de clientes.');
     clientes.value = [];
   } finally {
     cargando.value = false;
   }
-  // Las métricas son accesorias: si el resumen falla, las tarjetas siguen
-  // mostrándose con ceros en vez de dejar la pantalla vacía.
   try {
     const resumen = await obtenerResumen(yyyymm.value);
     rollups.value = resumen.porCliente;
@@ -238,7 +229,6 @@ async function cargar() {
   } catch {
     rollups.value = [];
   }
-  // Igual de accesorio: sin esto la pantalla sigue siendo útil.
   try {
     duplicados.value = await detectarDuplicados();
   } catch {
@@ -314,44 +304,47 @@ onMounted(() => {
         </div>
       </TarjetaPanel>
 
-      <!-- Clientes auto-detectados -->
+      <!-- Comercios y Clientes sugeridos (Deduplicados y con Descarte Persistente) -->
       <TarjetaPanel
-        v-if="clientesAutoDetectados.length > 0"
-        :titulo="`Detectados automáticamente (${clientesAutoDetectados.length})`"
-        subtitulo="Comercios encontrados en las facturas. Confirma los que son tus contribuyentes."
+        v-if="sugerencias.length > 0"
+        :titulo="`Comercios y Clientes Sugeridos (${sugerencias.length})`"
+        subtitulo="Detectados en facturas procesadas que aún no están en el Maestro de Clientes."
       >
         <div class="detectados">
-          <div v-for="c in clientesAutoDetectados" :key="c.id" class="detectado">
+          <div v-for="sug in sugerencias" :key="sug.id" class="detectado">
             <div class="detectado__info">
-              <AvatarIniciales :nombre="c.nombre" />
+              <AvatarIniciales :nombre="sug.nombre" />
               <div class="detectado__texto">
-                <span class="detectado__nombre">{{ c.nombre }}</span>
+                <span class="detectado__nombre">{{ sug.nombre }}</span>
                 <span class="detectado__rnc">
-                  {{ c.rnc }}
-                  <Pastilla v-if="!c.rncVerificado" texto="RNC sin verificar" tono="alerta" />
+                  {{ sug.rnc || 'Sin RNC / Cédula' }}
+                  <Pastilla
+                    :texto="sug.rol === 'EMISOR' ? 'Detectado como Emisor' : 'Detectado como Receptor'"
+                    :tono="sug.rol === 'EMISOR' ? 'indigo' : 'teal'"
+                  />
+                  <Pastilla
+                    v-if="sug.vecesDetectado > 1"
+                    :texto="`${sug.vecesDetectado} facturas`"
+                    tono="neutro"
+                  />
                 </span>
               </div>
             </div>
-            <div v-if="confirmando === c.id" class="detectado__confirmar">
-              <label class="detectado__campo" :for="`detectado-ingreso-${c.id}`">
-                <span>Tipo de ingreso</span>
-                <Select
-                  v-model="tipoIngresoConfirmar"
-                  :input-id="`detectado-ingreso-${c.id}`"
-                  :options="catalogos.catalogos.tiposIngreso607.map((t) => ({ label: `${t.codigo} · ${t.descripcion}`, value: t.codigo }))"
-                  option-label="label"
-                  option-value="value"
-                  class="detectado__select"
-                />
-              </label>
-              <div class="detectado__botones">
-                <Button label="Confirmar" icon="pi pi-check" size="small" @click="onConfirmarCliente(c.id)" />
-                <Button label="Cancelar" severity="secondary" outlined size="small" @click="confirmando = null" />
-              </div>
-            </div>
-            <div v-else class="detectado__acciones">
-              <Button label="Confirmar como contribuyente" icon="pi pi-check" size="small" severity="success" @click="confirmando = c.id" />
-              <Button label="Descartar" icon="pi pi-times" size="small" severity="secondary" outlined @click="onDescartarCliente(c.id)" />
+            <div class="detectado__acciones">
+              <Button
+                label="Crear cliente"
+                icon="pi pi-plus"
+                size="small"
+                @click="onCrearDesdeSugerencia(sug)"
+              />
+              <Button
+                label="Descartar"
+                icon="pi pi-times"
+                size="small"
+                severity="secondary"
+                outlined
+                @click="onDescartarSugerencia(sug)"
+              />
             </div>
           </div>
         </div>
@@ -489,7 +482,7 @@ onMounted(() => {
   padding: 9px 15px;
   font-family: inherit;
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
 }
 .boton-primario:hover {
@@ -502,7 +495,7 @@ onMounted(() => {
   padding: 0;
   font-family: inherit;
   font-size: 11.5px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--teal);
   cursor: pointer;
 }
@@ -549,7 +542,7 @@ onMounted(() => {
 }
 .tarjeta__nombre {
   font-size: 13.5px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.25;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -581,7 +574,7 @@ onMounted(() => {
 }
 .metrica__valor {
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -633,7 +626,7 @@ onMounted(() => {
 }
 .form__campo label {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--texto-suave);
 }
 .form__campo--casilla label {
@@ -678,7 +671,7 @@ onMounted(() => {
 }
 .vacio__titulo {
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
 }
 .vacio__texto {
   font-size: 12.5px;
@@ -800,7 +793,7 @@ onMounted(() => {
   gap: 2px;
 }
 .grupo__nombre {
-  font-weight: 700;
+  font-weight: 600;
   font-size: 13.5px;
   color: var(--texto);
 }
