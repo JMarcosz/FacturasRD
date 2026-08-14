@@ -66,16 +66,9 @@ describe('derivarFactura607', () => {
     expect(avisos.some((a) => a.campo === 'formaVenta')).toBe(false);
   });
 
-  it('avisa y deja la distribución en cero cuando no hay señal de forma de pago', () => {
+  it('asigna VENTA_CREDITO (100%) por defecto cuando no hay señal de forma de pago', () => {
     const { factura, avisos } = derivarFactura607(hechosBase(), clienteConTipoIngreso);
-    const total = factura.montoEfectivo
-      .plus(factura.montoChequeTransferencia)
-      .plus(factura.montoTarjeta)
-      .plus(factura.montoVentaCredito)
-      .plus(factura.montoBonos)
-      .plus(factura.montoPermuta)
-      .plus(factura.montoOtrasFormas);
-    expect(total.toFixed(2)).toBe('0.00');
+    expect(factura.montoVentaCredito.toFixed(2)).toBe('1180.00');
     expect(avisos.some((a) => a.campo === 'formaVenta')).toBe(true);
   });
 

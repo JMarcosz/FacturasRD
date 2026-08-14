@@ -257,6 +257,20 @@ function cargarDesdeFactura(f: Factura) {
   form.montoBonos = Number(f.montoBonos ?? 0);
   form.montoPermuta = Number(f.montoPermuta ?? 0);
   form.montoOtrasFormas = Number(f.montoOtrasFormas ?? 0);
+
+  if (form.clasificacionOperacion === "INGRESO" || f.formato === "F607") {
+    const totalDistribuido =
+      form.montoEfectivo +
+      form.montoChequeTransferencia +
+      form.montoTarjeta +
+      form.montoVentaCredito +
+      form.montoBonos +
+      form.montoPermuta +
+      form.montoOtrasFormas;
+    if (totalDistribuido === 0) {
+      form.montoVentaCredito = form.montoFacturado + form.itbisFacturado;
+    }
+  }
 }
 
 const OPCIONES_TIPO_BIENES_SERVICIOS_606 = [
@@ -288,6 +302,17 @@ function seleccionarClasificacion(op: "INGRESO" | "COSTO" | "GASTO") {
   form.clasificacionOperacion = op;
   if (op === "INGRESO") {
     if (!form.tipoIngreso) form.tipoIngreso = "01";
+    const totalDistribuido =
+      form.montoEfectivo +
+      form.montoChequeTransferencia +
+      form.montoTarjeta +
+      form.montoVentaCredito +
+      form.montoBonos +
+      form.montoPermuta +
+      form.montoOtrasFormas;
+    if (totalDistribuido === 0) {
+      form.montoVentaCredito = form.montoFacturado + form.itbisFacturado;
+    }
   } else if (op === "COSTO") {
     form.tipoIngreso = "";
     if (form.tipoBienesServicios !== "09" && form.tipoBienesServicios !== "10") {

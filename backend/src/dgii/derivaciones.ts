@@ -198,15 +198,14 @@ export function derivarFactura607(
     });
   }
 
-  const forma = clasificarFormaVenta607(hechos);
+  const formaDetectada = clasificarFormaVenta607(hechos);
+  const forma = formaDetectada ?? 'VENTA_CREDITO';
   const totalConImpuesto = montoFacturado.plus(itbisFacturado);
-  const distribucion = forma
-    ? distribuirFormaVenta607(forma, totalConImpuesto)
-    : distribuirFormaVenta607('OTRAS_FORMAS', new Decimal(0));
-  if (!forma) {
+  const distribucion = distribuirFormaVenta607(forma, totalConImpuesto);
+  if (!formaDetectada) {
     avisos.push({
       campo: 'formaVenta',
-      mensaje: 'No se pudo determinar la forma de venta a partir del documento; debe distribuirse manualmente.',
+      mensaje: 'Forma de venta no especificada en el documento; se asignó "Venta a Crédito (100%)" por defecto.',
     });
   }
 
