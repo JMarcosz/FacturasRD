@@ -837,7 +837,28 @@ function detallePendiente(p: Documento): string {
   return haceCuanto(p.createdAt);
 }
 
-// ── Celdas ───────────────────────────────────────────────────────────────────
+// ── Celdas y Selección Táctil Móvil ──────────────────────────────────────────
+function estaSeleccionada(f: Factura): boolean {
+  return seleccion.value.some((s) => s.id === f.id);
+}
+
+function toggleSeleccion(f: Factura) {
+  const idx = seleccion.value.findIndex((s) => s.id === f.id);
+  if (idx >= 0) {
+    seleccion.value.splice(idx, 1);
+  } else {
+    seleccion.value.push(f);
+  }
+}
+
+function seleccionarTodas() {
+  if (seleccion.value.length === facturasFiltradas.value.length) {
+    seleccion.value = [];
+  } else {
+    seleccion.value = [...facturasFiltradas.value];
+  }
+}
+
 function textoClasificacion(f: Factura): string {
   if (f.clasificacionOperacion === "COSTO") return "COSTO";
   if (f.clasificacionOperacion === "GASTO") return "GASTO";
@@ -1102,127 +1123,256 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <DataTable
-        v-model:selection="seleccion"
-        :value="facturasFiltradas"
-        :loading="cargando"
-        selection-mode="multiple"
-        data-key="id"
-        paginator
-        :rows="10"
-        size="small"
-        scrollable
-        table-style="min-width: 1180px"
-        sort-field="fechaComprobante"
-        :sort-order="-1"
-        paginator-template="CurrentPageReport PrevPageLink PageLinks NextPageLink"
-        current-page-report-template="Mostrando {first}–{last} de {totalRecords} facturas"
-        class="tabla"
-        @row-click="(e: { data: Factura }) => abrirFactura(e.data)"
-      >
-        <template #empty>
-          <div class="vacio">
-            Todavía no hay facturas que coincidan con estos filtros.
-          </div>
-        </template>
+      <!-- Vista Tabla para Desktop y Tablets (> 768px) -->
+      <div class="contenedor-tabla-desktop">
+        <DataTable
+          v-model:selection="seleccion"
+          :value="facturasFiltradas"
+          :loading="cargando"
+          selection-mode="multiple"
+          data-key="id"
+          paginator
+          :rows="10"
+          size="small"
+          scrollable
+          table-style="min-width: 1180px"
+          sort-field="fechaComprobante"
+          :sort-order="-1"
+          paginator-template="CurrentPageReport PrevPageLink PageLinks NextPageLink"
+          current-page-report-template="Mostrando {first}–{last} de {totalRecords} facturas"
+          class="tabla"
+          @row-click="(e: { data: Factura }) => abrirFactura(e.data)"
+        >
+          <template #empty>
+            <div class="vacio">
+              Todavía no hay facturas que coincidan con estos filtros.
+            </div>
+          </template>
 
-        <Column selection-mode="multiple" header-style="width: 34px" />
+          <Column selection-mode="multiple" header-style="width: 34px" />
 
-        <Column field="nombreEmisor" header="Comercio" sortable>
-          <template #body="{ data }: { data: Factura }">
-            <div class="comercio">
-              <AvatarIniciales :nombre="data.nombreEmisor" />
-              <span class="comercio__nombre">{{
-                data.nombreEmisor ?? "—"
+          <Column field="nombreEmisor" header="Comercio" sortable>
+            <template #body="{ data }: { data: Factura }">
+              <div class="comercio">
+                <AvatarIniciales :nombre="data.nombreEmisor" />
+                <span class="comercio__nombre">{{
+                  data.nombreEmisor ?? "—"
+                }}</span>
+              </div>
+            </template>
+          </Column>
+
+          <Column header="RNC">
+            <template #body="{ data }: { data: Factura }">
+              <span class="tenue">{{
+                data.identificacionEmisor?.replace(/-/g, "") || "—"
               }}</span>
+            </template>
+          </Column>
+
+          <Column field="fechaComprobante" header="Fecha" sortable>
+            <template #body="{ data }: { data: Factura }">
+              <span class="tenue nowrap">{{
+                fmtFechaCorta(data.fechaComprobante)
+              }}</span>
+            </template>
+          </Column>
+
+          <Column header="Tipo NCF">
+            <template #body="{ data }: { data: Factura }">
+              <span class="tenue nowrap">{{
+                data.tipoNcf?.descripcion ?? "—"
+              }}</span>
+            </template>
+          </Column>
+
+          <Column field="ncf" header="NCF">
+            <template #body="{ data }: { data: Factura }">
+              <span class="ncf">{{ data.ncf?.replace(/-/g, "") || "—" }}</span>
+            </template>
+          </Column>
+
+          <Column header="Clasificación">
+            <template #body="{ data }: { data: Factura }">
+              <Pastilla
+                :texto="textoClasificacion(data)"
+                :tono="tonoClasificacion(data)"
+                punto
+              />
+            </template>
+          </Column>
+
+          <Column header="Tipo de gasto">
+            <template #body="{ data }: { data: Factura }">
+              <span class="suave">{{ textoTipoGasto(data) }}</span>
+            </template>
+          </Column>
+
+          <Column header="ITBIS" header-class="col-der" body-class="col-der">
+            <template #body="{ data }: { data: Factura }">
+              <span class="tenue">{{ fmtMonto(data.itbisFacturado) }}</span>
+            </template>
+          </Column>
+
+          <Column header="Monto RD$" header-class="col-der" body-class="col-der">
+            <template #body="{ data }: { data: Factura }">
+              <span class="monto">{{ fmtMonto(data.montoFacturado) }}</span>
+            </template>
+          </Column>
+
+          <Column header="Acciones" header-class="col-der" body-class="col-der">
+            <template #body="{ data }: { data: Factura }">
+              <div class="acciones">
+                <button
+                  type="button"
+                  class="accion"
+                  title="Editar"
+                  aria-label="Editar factura"
+                  @click="abrirFactura(data)"
+                >
+                  <i class="pi pi-pencil"></i>
+                </button>
+                <button
+                  type="button"
+                  class="accion accion--peligro"
+                  title="Eliminar"
+                  aria-label="Eliminar factura"
+                  @click="confirmarEliminar(data)"
+                >
+                  <i class="pi pi-trash"></i>
+                </button>
+              </div>
+            </template>
+          </Column>
+        </DataTable>
+      </div>
+
+      <!-- Modo Tarjetas Táctil para Móviles (<= 768px) -->
+      <div class="lista-tarjetas-movil">
+        <div v-if="cargando" class="vacio">
+          <i class="pi pi-spin pi-spinner" style="font-size: 18px; color: var(--teal)"></i>
+          <span style="margin-top: 8px; display: block">Cargando facturas…</span>
+        </div>
+        <div v-else-if="facturasFiltradas.length === 0" class="vacio">
+          Todavía no hay facturas que coincidan con estos filtros.
+        </div>
+        <div v-else class="tarjetas-movil">
+          <div class="tarjetas-movil__barra-superior">
+            <button type="button" class="btn-seleccionar-todas" @click="seleccionarTodas">
+              <input
+                type="checkbox"
+                :checked="facturasFiltradas.length > 0 && seleccion.length === facturasFiltradas.length"
+                class="checkbox-tactil"
+                aria-label="Seleccionar todas las facturas"
+              />
+              <span>{{ seleccion.length === facturasFiltradas.length ? 'Deseleccionar todas' : 'Seleccionar todas' }}</span>
+            </button>
+            <span class="tarjetas-movil__conteo">{{ facturasFiltradas.length }} {{ facturasFiltradas.length === 1 ? 'factura' : 'facturas' }}</span>
+          </div>
+
+          <div
+            v-for="f in facturasFiltradas"
+            :key="f.id"
+            class="tarjeta-movil"
+            :class="{ 'tarjeta-movil--seleccionada': estaSeleccionada(f) }"
+            @click="abrirFactura(f)"
+          >
+            <div class="tarjeta-movil__cabecera">
+              <div class="tarjeta-movil__checkbox" @click.stop="toggleSeleccion(f)">
+                <input
+                  type="checkbox"
+                  :checked="estaSeleccionada(f)"
+                  class="checkbox-tactil"
+                  aria-label="Seleccionar factura"
+                />
+              </div>
+              <AvatarIniciales :nombre="f.nombreEmisor" :tamano="34" :radio="9" />
+              <div class="tarjeta-movil__emisor">
+                <span class="tarjeta-movil__nombre">{{ f.nombreEmisor || 'Comercio desconocido' }}</span>
+                <span class="tarjeta-movil__rnc">RNC {{ f.identificacionEmisor?.replace(/-/g, "") || "—" }}</span>
+              </div>
+              <Pastilla :texto="textoClasificacion(f)" :tono="tonoClasificacion(f)" punto />
             </div>
-          </template>
-        </Column>
 
-        <Column header="RNC">
-          <template #body="{ data }: { data: Factura }">
-            <span class="tenue">{{
-              data.identificacionEmisor?.replace(/-/g, "") || "—"
-            }}</span>
-          </template>
-        </Column>
-
-        <Column field="fechaComprobante" header="Fecha" sortable>
-          <template #body="{ data }: { data: Factura }">
-            <span class="tenue nowrap">{{
-              fmtFechaCorta(data.fechaComprobante)
-            }}</span>
-          </template>
-        </Column>
-
-        <Column header="Tipo NCF">
-          <template #body="{ data }: { data: Factura }">
-            <span class="tenue nowrap">{{
-              data.tipoNcf?.descripcion ?? "—"
-            }}</span>
-          </template>
-        </Column>
-
-        <Column field="ncf" header="NCF">
-          <template #body="{ data }: { data: Factura }">
-            <span class="ncf">{{ data.ncf?.replace(/-/g, "") || "—" }}</span>
-          </template>
-        </Column>
-
-        <Column header="Clasificación">
-          <template #body="{ data }: { data: Factura }">
-            <Pastilla
-              :texto="textoClasificacion(data)"
-              :tono="tonoClasificacion(data)"
-              punto
-            />
-          </template>
-        </Column>
-
-        <Column header="Tipo de gasto">
-          <template #body="{ data }: { data: Factura }">
-            <span class="suave">{{ textoTipoGasto(data) }}</span>
-          </template>
-        </Column>
-
-        <Column header="ITBIS" header-class="col-der" body-class="col-der">
-          <template #body="{ data }: { data: Factura }">
-            <span class="tenue">{{ fmtMonto(data.itbisFacturado) }}</span>
-          </template>
-        </Column>
-
-        <Column header="Monto RD$" header-class="col-der" body-class="col-der">
-          <template #body="{ data }: { data: Factura }">
-            <span class="monto">{{ fmtMonto(data.montoFacturado) }}</span>
-          </template>
-        </Column>
-
-        <Column header="Acciones" header-class="col-der" body-class="col-der">
-          <template #body="{ data }: { data: Factura }">
-            <div class="acciones">
-              <button
-                type="button"
-                class="accion"
-                title="Editar"
-                aria-label="Editar factura"
-                @click="abrirFactura(data)"
-              >
-                <i class="pi pi-pencil"></i>
-              </button>
-              <button
-                type="button"
-                class="accion accion--peligro"
-                title="Eliminar"
-                aria-label="Eliminar factura"
-                @click="confirmarEliminar(data)"
-              >
-                <i class="pi pi-trash"></i>
-              </button>
+            <div class="tarjeta-movil__datos">
+              <div class="tarjeta-movil__item">
+                <span class="tarjeta-movil__etiqueta">NCF</span>
+                <span class="tarjeta-movil__ncf">{{ f.ncf?.replace(/-/g, "") || "—" }}</span>
+              </div>
+              <div class="tarjeta-movil__item">
+                <span class="tarjeta-movil__etiqueta">Fecha</span>
+                <span class="tarjeta-movil__valor">{{ fmtFechaCorta(f.fechaComprobante) }}</span>
+              </div>
+              <div class="tarjeta-movil__item tarjeta-movil__item--monto">
+                <span class="tarjeta-movil__etiqueta">Total</span>
+                <span class="tarjeta-movil__monto">RD$ {{ fmtMonto(f.montoFacturado) }}</span>
+              </div>
             </div>
-          </template>
-        </Column>
-      </DataTable>
+
+            <div class="tarjeta-movil__pie">
+              <span class="tarjeta-movil__itbis">ITBIS: RD$ {{ fmtMonto(f.itbisFacturado) }}</span>
+              <div class="tarjeta-movil__acciones" @click.stop>
+                <button
+                  type="button"
+                  class="accion"
+                  title="Editar"
+                  aria-label="Editar factura"
+                  @click="abrirFactura(f)"
+                >
+                  <i class="pi pi-pencil"></i>
+                </button>
+                <button
+                  type="button"
+                  class="accion accion--peligro"
+                  title="Eliminar"
+                  aria-label="Eliminar factura"
+                  @click="confirmarEliminar(f)"
+                >
+                  <i class="pi pi-trash"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </TarjetaPanel>
+
+    <!-- Barra de acciones flotante en móvil cuando hay selección -->
+    <div v-if="seleccion.length > 0" class="barra-acciones-flotante">
+      <div class="barra-acciones-flotante__conteo">
+        <strong>{{ seleccion.length }}</strong> sel.
+      </div>
+      <div class="barra-acciones-flotante__botones">
+        <button
+          type="button"
+          class="btn-flotante btn-flotante--teal"
+          @click="mostrarDialogoAsignar = true"
+        >
+          <i class="pi pi-tag"></i> Asignar
+        </button>
+        <button
+          type="button"
+          class="btn-flotante btn-flotante--teal"
+          @click="abrirDialogoFiscal"
+        >
+          <i class="pi pi-sliders-h"></i> Fiscal
+        </button>
+        <button
+          type="button"
+          class="btn-flotante btn-flotante--ok"
+          @click="confirmarClasificacionSeleccion"
+        >
+          <i class="pi pi-check"></i> Confirmar
+        </button>
+        <button
+          type="button"
+          class="btn-flotante btn-flotante--peligro"
+          @click="confirmarEliminarSeleccion"
+        >
+          <i class="pi pi-trash"></i>
+        </button>
+      </div>
+    </div>
 
     <div class="inferior">
       <TarjetaPanel
@@ -2062,5 +2212,261 @@ onUnmounted(() => {
 }
 .w-full {
   width: 100%;
+}
+
+/* ── Modo Tarjetas Móvil y Adaptabilidad ── */
+.contenedor-tabla-desktop {
+  display: block;
+}
+.lista-tarjetas-movil {
+  display: none;
+}
+
+.tarjetas-movil {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.tarjetas-movil__barra-superior {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
+}
+.btn-seleccionar-todas {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--texto-suave);
+  padding: 4px 0;
+}
+.tarjetas-movil__conteo {
+  font-size: 11.5px;
+  color: var(--texto-tenue);
+  font-weight: 600;
+}
+
+.tarjeta-movil {
+  background: var(--superficie);
+  border: 1px solid var(--borde);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+.tarjeta-movil:hover {
+  border-color: var(--borde-fuerte);
+}
+.tarjeta-movil--seleccionada {
+  border-color: var(--teal);
+  background: var(--teal-suave);
+  box-shadow: 0 0 0 1.5px var(--teal);
+}
+
+.tarjeta-movil__cabecera {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tarjeta-movil__checkbox {
+  display: flex;
+  align-items: center;
+  padding: 2px;
+}
+.checkbox-tactil {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--teal);
+  cursor: pointer;
+}
+.tarjeta-movil__emisor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.tarjeta-movil__nombre {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--texto);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tarjeta-movil__rnc {
+  font-size: 11.5px;
+  color: var(--texto-suave);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.tarjeta-movil__datos {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1.3fr;
+  gap: 8px;
+  background: var(--superficie-tenue);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.tarjeta-movil__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.tarjeta-movil__item--monto {
+  text-align: right;
+}
+.tarjeta-movil__etiqueta {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--texto-debil);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.tarjeta-movil__ncf {
+  font-size: 11.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  color: var(--texto);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tarjeta-movil__valor {
+  font-size: 12px;
+  color: var(--texto-medio);
+}
+.tarjeta-movil__monto {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--texto);
+}
+
+.tarjeta-movil__pie {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 2px;
+}
+.tarjeta-movil__itbis {
+  font-size: 11.5px;
+  color: var(--texto-suave);
+}
+.tarjeta-movil__acciones {
+  display: flex;
+  gap: 6px;
+}
+
+/* Barra flotante para acciones móviles */
+.barra-acciones-flotante__conteo {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.barra-acciones-flotante__botones {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-flotante {
+  border: 0;
+  border-radius: 7px;
+  padding: 6px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: inherit;
+}
+.btn-flotante--teal {
+  background: var(--teal);
+  color: #fff;
+}
+.btn-flotante--ok {
+  background: var(--ok);
+  color: #fff;
+}
+.btn-flotante--peligro {
+  background: var(--error);
+  color: #fff;
+  padding: 6px 8px;
+}
+
+/* ── Media Queries ── */
+@media (max-width: 1024px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .inferior {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .contenedor-tabla-desktop {
+    display: none;
+  }
+  .lista-tarjetas-movil {
+    display: block;
+  }
+  .cabecera {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .filtros {
+    gap: 8px;
+  }
+  .filtros > button.accion-lote {
+    display: none; /* En móvil se accionan desde la barra flotante */
+  }
+  .buscador {
+    width: 100%;
+    min-width: 0;
+  }
+  .filtro {
+    padding: 6px 9px;
+    font-size: 12px;
+  }
+  .vistas {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .vistas::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .kpis {
+    grid-template-columns: 1fr;
+  }
+  .tarjeta-movil__datos {
+    grid-template-columns: 1fr 1fr;
+  }
+  .tarjeta-movil__item--monto {
+    grid-column: 1 / -1;
+    text-align: left;
+    border-top: 1px solid var(--borde);
+    padding-top: 4px;
+    margin-top: 2px;
+  }
+  .dropzone {
+    padding: 16px;
+  }
 }
 </style>

@@ -651,6 +651,7 @@ function onTeclado(ev: KeyboardEvent) {
  * `llenar` (que exige una altura definida en el padre) colapsaría a 0.
  */
 const anchoAngosto = ref(window.innerWidth <= 1200);
+const vistaMovil = ref<'datos' | 'documento'>('datos');
 function onResize() {
   anchoAngosto.value = window.innerWidth <= 1200;
 }
@@ -746,9 +747,32 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <!-- Selector segmentado para alternar entre Comprobante y Formulario en móvil -->
+      <div class="selector-vista-movil">
+        <button
+          type="button"
+          class="selector-vista-movil__btn"
+          :class="{ 'selector-vista-movil__btn--activo': vistaMovil === 'datos' }"
+          @click="vistaMovil = 'datos'"
+        >
+          <i class="pi pi-file-edit"></i> Datos Fiscales
+        </button>
+        <button
+          type="button"
+          class="selector-vista-movil__btn"
+          :class="{ 'selector-vista-movil__btn--activo': vistaMovil === 'documento' }"
+          @click="vistaMovil = 'documento'"
+        >
+          <i class="pi pi-image"></i> Ver Comprobante
+        </button>
+      </div>
+
       <div class="cuerpo">
         <!-- ── Documento original ── -->
-        <section class="panel">
+        <section
+          class="panel panel-documento"
+          :class="{ 'panel-movil--oculto': vistaMovil !== 'documento' && anchoAngosto }"
+        >
           <div class="panel__cabecera">
             <span class="panel__titulo">Documento original</span>
             <div class="herramientas">
@@ -823,7 +847,10 @@ onUnmounted(() => {
         </section>
 
         <!-- ── Campos ── -->
-        <div class="derecha">
+        <div
+          class="derecha"
+          :class="{ 'panel-movil--oculto': vistaMovil !== 'datos' && anchoAngosto }"
+        >
           <section class="panel panel--sin-padding">
             <!-- Barra de Selección de Clasificación Contable Rápida -->
             <div class="barra-clasificacion">
@@ -2154,6 +2181,42 @@ onUnmounted(() => {
    entre el documento y el formulario, así que `.cuerpo` y sus paneles vuelven
    al flujo normal (alto por contenido, scroll de página). El visor ya lo
    sabe por su cuenta: ver `anchoAngosto`, que en este ancho apaga `llenar`. */
+/* ── Selector Segmentado Móvil ── */
+.selector-vista-movil {
+  display: none;
+  background: var(--superficie);
+  border-bottom: 1px solid var(--borde);
+  padding: 6px 12px;
+  gap: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 15;
+}
+
+.selector-vista-movil__btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--borde);
+  background: var(--superficie-tenue);
+  color: var(--texto-suave);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s ease;
+}
+
+.selector-vista-movil__btn--activo {
+  background: var(--teal-suave) !important;
+  color: var(--teal) !important;
+  border-color: var(--teal-borde) !important;
+}
+
 @media (max-width: 1200px) {
   .cuerpo {
     grid-template-columns: 1fr;
@@ -2165,6 +2228,12 @@ onUnmounted(() => {
   }
   .resumenes {
     grid-template-columns: 1fr;
+  }
+  .selector-vista-movil {
+    display: flex;
+  }
+  .panel-movil--oculto {
+    display: none !important;
   }
 }
 
@@ -2180,10 +2249,13 @@ onUnmounted(() => {
   }
   .cabecera__acciones {
     gap: 6px;
+    width: 100%;
+    justify-content: flex-end;
   }
   .cabecera__acciones :deep(.p-button) {
-    font-size: 12.5px;
-    padding: 7px 12px;
+    flex: 1;
+    font-size: 13px;
+    padding: 9px 12px;
   }
   .cabecera__acciones :deep(.p-button .p-button-icon) {
     font-size: 11px;
@@ -2193,7 +2265,7 @@ onUnmounted(() => {
   }
   .cuerpo {
     gap: 12px;
-    padding: 12px 16px 16px;
+    padding: 12px 14px 16px;
   }
   .campos {
     grid-template-columns: 1fr;

@@ -8,6 +8,7 @@ import { useAuthStore } from '../stores/auth';
 import { aYyyymm, obtenerResumen } from '../api/estadisticas';
 import { fmtYyyymm, pct } from '../formato';
 import CintaProgreso from './ui/CintaProgreso.vue';
+import BannerInstalarPwa from './BannerInstalarPwa.vue';
 import type { ResumenEstadisticas } from '../types';
 
 const props = withDefaults(
@@ -33,16 +34,13 @@ const route = useRoute();
 const router = useRouter();
 
 const resumen = ref<ResumenEstadisticas | null>(null);
-// El componente InputText no expone `$el` en sus tipos, así que el atajo ⌘K
-// busca el input real dentro del contenedor.
 const buscadorRef = ref<HTMLElement | null>(null);
-
-/**
- * Solo tiene efecto por debajo de 1024px: ahí la barra lateral deja de ocupar
- * su columna fija y pasa a deslizarse por encima del contenido. Por encima de
- * ese ancho el menú está siempre visible y este estado se ignora.
- */
 const menuAbierto = ref(false);
+const estaOnline = ref(typeof navigator !== 'undefined' ? navigator.onLine : true);
+
+function actualizarEstadoRed() {
+  estaOnline.value = navigator.onLine;
+}
 
 interface ItemNav {
   label: string;
@@ -64,8 +62,6 @@ const navGroups: Array<{ titulo: string; items: ItemNav[] }> = [
         contador: () => resumen.value?.mes.sinClasificar ?? 0,
         tono: 'alerta',
       },
-      // 'triaje' ya no es una ruta propia — ver el caso especial en ir()/activo():
-      // la antigua pantalla se consolidó como un filtro dentro de Facturas.
       { label: 'Triaje', icono: 'pi-list-check', ruta: 'triaje' },
       { label: 'Clientes', icono: 'pi-users', ruta: 'clientes' },
     ],
@@ -89,8 +85,6 @@ const navGroups: Array<{ titulo: string; items: ItemNav[] }> = [
 
 function activo(item: ItemNav): boolean {
   if (!item.ruta) return false;
-  // Triaje es la cola "clasificada pero sin confirmar" dentro de Facturas, no
-  // una ruta propia: se distingue por la vista activa, no por el nombre.
   if (item.ruta === 'triaje') return route.name === 'facturas' && route.query.vista === 'por_confirmar';
   if (item.ruta === 'facturas') {
     return (route.name === 'facturas' && route.query.vista !== 'por_confirmar') || route.name === 'factura-detalle';
@@ -105,6 +99,10 @@ function ir(item: ItemNav) {
     return;
   }
   if (item.ruta) router.push({ name: item.ruta });
+}
+
+function navegar(nombreRuta: string) {
+  router.push({ name: nombreRuta });
 }
 
 const tituloPantalla = computed(() => (route.meta.titulo as string | undefined) ?? 'Facturas RD');
@@ -124,8 +122,6 @@ const iniciales = computed(() =>
     .join(''),
 );
 
-// Tarjeta "Período abierto": mes en curso, clientes con actividad y cuánto
-// falta por clasificar.
 const periodoAbierto = computed(() => {
   if (!resumen.value) return null;
   const m = resumen.value.mes;
@@ -142,7 +138,6 @@ async function cargarResumen() {
   try {
     resumen.value = await obtenerResumen(aYyyymm(new Date()));
   } catch {
-    // El sidebar no debe tumbar la pantalla si el resumen falla.
     resumen.value = null;
   }
 }
@@ -163,12 +158,15 @@ function salir() {
 onMounted(() => {
   cargarResumen();
   window.addEventListener('keydown', onAtajo);
+  window.addEventListener('online', actualizarEstadoRed);
+  window.addEventListener('offline', actualizarEstadoRed);
 });
-onUnmounted(() => window.removeEventListener('keydown', onAtajo));
+onUnmounted(() => {
+  window.removeEventListener('keydown', onAtajo);
+  window.removeEventListener('online', actualizarEstadoRed);
+  window.removeEventListener('offline', actualizarEstadoRed);
+});
 
-// Al cambiar de pantalla los contadores pueden haber cambiado (se clasificó,
-// se borró, se revisó) — se refrescan sin que cada vista tenga que avisar.
-// En móvil además se cierra el menú: navegar ES la señal de que terminaste con él.
 watch(
   () => route.name,
   () => {
@@ -184,18 +182,28 @@ defineExpose({ refrescarResumen: cargarResumen });
   <div class="marco">
     <a href="#contenido-principal" class="saltar-contenido">Ir al contenido</a>
 
-    <!-- Solo existe cuando el menú está desplegado sobre el contenido (móvil):
-         cerrar tocando fuera es el gesto que la gente intenta primero. -->
+    <!-- Overlay desenfocado para móvil -->
     <div v-if="menuAbierto" class="velo" @click="menuAbierto = false"></div>
 
+    <!-- Barra lateral / Drawer deslizable -->
     <aside class="lateral" :class="{ 'lateral--abierto': menuAbierto }">
-      <RouterLink to="/dashboard" class="marca">
-        <div class="marca__logo">FR</div>
-        <div class="marca__texto">
-          <span class="marca__nombre">Facturas RD</span>
-          <span class="marca__sub">DGII 606 · 607</span>
-        </div>
-      </RouterLink>
+      <div class="lateral__cabecera">
+        <RouterLink to="/dashboard" class="marca" @click="menuAbierto = false">
+          <div class="marca__logo">FR</div>
+          <div class="marca__texto">
+            <span class="marca__nombre">Facturas RD</span>
+            <span class="marca__sub">DGII 606 · 607</span>
+          </div>
+        </RouterLink>
+        <button
+          type="button"
+          class="lateral__btn-cerrar"
+          aria-label="Cerrar menú"
+          @click="menuAbierto = false"
+        >
+          <i class="pi pi-times"></i>
+        </button>
+      </div>
 
       <nav class="nav">
         <div v-for="grupo in navGroups" :key="grupo.titulo" class="nav__grupo">
@@ -272,6 +280,12 @@ defineExpose({ refrescarResumen: cargarResumen });
           <i class="pi pi-angle-right" style="font-size: 11px"></i>
           <span class="miga__actual">{{ tituloPantalla }}</span>
         </div>
+
+        <!-- Indicador de estado offline si se pierde conexión -->
+        <span v-if="!estaOnline" class="badge-offline" title="Trabajando sin conexión">
+          <i class="pi pi-wifi"></i> Sin conexión
+        </span>
+
         <div style="flex: 1"></div>
         <IconField v-if="props.mostrarBusqueda" ref="buscadorRef" class="buscador">
           <InputIcon class="pi pi-search" />
@@ -285,14 +299,72 @@ defineExpose({ refrescarResumen: cargarResumen });
         <slot name="acciones" />
       </header>
 
-      <!-- No en pantallas de pantalla completa (Detalle de factura): ahí la
-           altura fija de `.principal--completa` ya está calculada para el
-           alto exacto de la topbar, y la cinta rompería esa cuenta. -->
       <CintaProgreso v-if="!props.pantallaCompleta" :resumen="resumen" />
 
       <main id="contenido-principal" class="principal" :class="{ 'principal--completa': props.pantallaCompleta }" tabindex="-1">
         <slot :resumen="resumen" :refrescar-resumen="cargarResumen" />
       </main>
+
+      <!-- Barra de navegación inferior táctil para móviles (Bottom App Bar) -->
+      <nav class="bottom-nav" aria-label="Navegación principal móvil">
+        <button
+          type="button"
+          class="bottom-nav__item"
+          :class="{ 'bottom-nav__item--activo': route.name === 'dashboard' }"
+          @click="navegar('dashboard')"
+        >
+          <i class="pi pi-chart-bar"></i>
+          <span>Inicio</span>
+        </button>
+
+        <button
+          type="button"
+          class="bottom-nav__item"
+          :class="{ 'bottom-nav__item--activo': route.name === 'facturas' || route.name === 'factura-detalle' }"
+          @click="navegar('facturas')"
+        >
+          <div class="bottom-nav__icono-wrap">
+            <i class="pi pi-receipt"></i>
+            <span
+              v-if="(resumen?.mes.sinClasificar ?? 0) > 0"
+              class="bottom-nav__punto-aviso"
+            ></span>
+          </div>
+          <span>Facturas</span>
+        </button>
+
+        <button
+          type="button"
+          class="bottom-nav__item"
+          :class="{ 'bottom-nav__item--activo': route.name === 'clientes' }"
+          @click="navegar('clientes')"
+        >
+          <i class="pi pi-users"></i>
+          <span>Clientes</span>
+        </button>
+
+        <button
+          type="button"
+          class="bottom-nav__item"
+          :class="{ 'bottom-nav__item--activo': route.name === 'reporteria' }"
+          @click="navegar('reporteria')"
+        >
+          <i class="pi pi-file-export"></i>
+          <span>Reportes</span>
+        </button>
+
+        <button
+          type="button"
+          class="bottom-nav__item"
+          @click="menuAbierto = true"
+        >
+          <i class="pi pi-bars"></i>
+          <span>Más</span>
+        </button>
+      </nav>
+
+      <!-- Banner de instalación PWA -->
+      <BannerInstalarPwa />
     </div>
   </div>
 </template>
@@ -608,11 +680,96 @@ defineExpose({ refrescarResumen: cargarResumen });
   }
 }
 
-/* ── Menú contraíble ──────────────────────────────────────────────────────
-   Bajo 1024px la lateral deja de ser una columna del flex y se convierte en
-   un panel que se desliza por encima. `visibility` (no solo el translate)
-   es lo que la saca del recorrido del tabulador cuando está cerrada: un menú
-   invisible pero enfocable manda el foco fuera de la pantalla. */
+.lateral__cabecera {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.lateral__btn-cerrar {
+  display: none;
+  background: transparent;
+  border: 0;
+  color: var(--texto-suave);
+  font-size: 16px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.badge-offline {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+  padding: 3px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+/* ── Bottom App Bar para móvil (< 640px) ── */
+.bottom-nav {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: calc(var(--bottom-nav-height, 60px) + var(--sab, 0px));
+  padding-bottom: var(--sab, 0px);
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(16px);
+  border-top: 1px solid var(--borde);
+  z-index: 100;
+  align-items: center;
+  justify-content: space-around;
+}
+
+.bottom-nav__item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--texto-suave);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 0;
+  transition: color 0.15s ease;
+}
+
+.bottom-nav__item i {
+  font-size: 18px;
+}
+
+.bottom-nav__item--activo {
+  color: var(--teal) !important;
+}
+
+.bottom-nav__icono-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.bottom-nav__punto-aviso {
+  position: absolute;
+  top: -2px;
+  right: -5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--alerta);
+  border: 1.5px solid #ffffff;
+}
+
+/* ── Menú contraíble ── */
 @media (max-width: 1024px) {
   .lateral {
     position: fixed;
@@ -623,10 +780,14 @@ defineExpose({ refrescarResumen: cargarResumen });
     visibility: hidden;
     transition: transform 0.22s ease, visibility 0.22s;
     box-shadow: 0 10px 40px rgba(16, 20, 26, 0.16);
+    backdrop-filter: blur(12px);
   }
   .lateral--abierto {
     transform: translateX(0);
     visibility: visible;
+  }
+  .lateral__btn-cerrar {
+    display: block;
   }
   .hamburguesa {
     display: grid;
@@ -641,8 +802,6 @@ defineExpose({ refrescarResumen: cargarResumen });
 }
 
 @media (max-width: 768px) {
-  /* El buscador deja de competir por el ancho con la miga de pan: baja a su
-     propia fila, completa. */
   .topbar {
     height: auto;
     flex-wrap: wrap;
@@ -654,6 +813,18 @@ defineExpose({ refrescarResumen: cargarResumen });
   }
   .principal {
     padding: 12px;
+  }
+}
+
+@media (max-width: 640px) {
+  .bottom-nav {
+    display: flex;
+  }
+  .principal {
+    padding-bottom: calc(var(--bottom-nav-height, 60px) + var(--sab, 0px) + 20px);
+  }
+  .hamburguesa {
+    display: none; /* En móvil se accede desde el botón Más de la barra inferior */
   }
 }
 
